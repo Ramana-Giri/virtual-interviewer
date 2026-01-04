@@ -1,0 +1,11 @@
+flask
+opencv-python
+deepface
+SpeechRecognition
+textblob
+numpy
+pyttsx3
+tensorflow
+tf-keras
+pyaudio
+opensmile
