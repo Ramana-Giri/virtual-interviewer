@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environment
+venv/
+env/
+.env
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Project Specific (Media/Output)
+*.wav
+*.mp3
+*.mp4
+*.avi
+*.log
+*.sqlite3
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Pytest
+.pytest_cache/
