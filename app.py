@@ -1,23 +1,20 @@
-from flask import Flask, render_template, Response
+from flask import Flask, render_template, Response, jsonify
 from services.video_service import VideoService
 from core.logic import InterviewerBrain
 
 app = Flask(__name__)
 
-# Shared "Memory" for the whole app
 shared_state = {
     "face_emotion": "Neutral",
     "audio_emotion": "Waiting...",
     "transcript": "",
     "energy": "Medium",
-    "system_status": "Initializing..."
+    "system_status": "Initializing...",
+    "interview_complete": False # Logic sets this to True when done
 }
 
-# Initialize Services
 video_svc = VideoService()
 brain = InterviewerBrain(shared_state)
-
-# Start the Brain
 brain.start()
 
 @app.route('/')
@@ -28,9 +25,21 @@ def index():
 def video_feed():
     return Response(gen(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
+# NEW: API to check if interview is done
+@app.route('/check_status')
+def check_status():
+    if shared_state["interview_complete"]:
+        return jsonify({"status": "complete"})
+    return jsonify({"status": "running"})
+
+# NEW: The Report Page
+@app.route('/report')
+def report():
+    # Pass the log data to the HTML
+    return render_template('report.html', logs=brain.interview_log)
+
 def gen():
     while True:
-        # Pass shared state so video can draw the UI text
         frame = video_svc.get_frame(shared_state)
         if frame:
             yield (b'--frame\r\n' b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n\r\n')

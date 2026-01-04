@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Interview Report</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            padding: 20px;
+            background: #f4f4f9;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+        }
+
+        th,
+        td {
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: left;
+        }
+
+        th {
+            background-color: #4CAF50;
+            color: white;
+        }
+
+        tr:nth-child(even) {
+            background-color: #f2f2f2;
+        }
+
+        .score-good {
+            color: green;
+            font-weight: bold;
+        }
+
+        .score-bad {
+            color: red;
+            font-weight: bold;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>📋 Candidate Evaluation Report</h1>
+    <table>
+        <thead>
+            <tr>
+                <th>Question</th>
+                <th>Your Answer</th>
+                <th>Face Emotion</th>
+                <th>Voice Tone</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for log in logs %}
+            <tr>
+                <td>{{ log.question }}</td>
+                <td>{{ log.answer }}</td>
+                <td class="{{ 'score-bad' if log.face_emotion in ['fear','sad'] else 'score-good' }}">
+                    {{ log.face_emotion }}
+                </td>
+                <td>{{ log.voice_emotion }} / {{ log.energy }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <br>
+    <a href="/">Restart Interview</a>
+</body>
+
+</html>

@@ -12,6 +12,11 @@ class AudioService:
     def __init__(self):
         self.recognizer = sr.Recognizer()
         # Initialize OpenSMILE with eGeMAPSv02 feature set
+
+        self.recognizer.energy_threshold = 300
+        self.recognizer.dynamic_energy_threshold = True
+        self.recognizer.pause_threshold = 1.5
+        
         self.smile = opensmile.Smile(
             feature_set=opensmile.FeatureSet.eGeMAPSv02,
             feature_level=opensmile.FeatureLevel.Functionals,
