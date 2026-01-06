@@ -1,123 +1,103 @@
-import speech_recognition as sr
-from textblob import TextBlob
+import whisper
+import parselmouth
+from parselmouth.praat import call
 import numpy as np
-import config
-import opensmile
+import librosa
 import os
-import tempfile
-import soundfile as sf
-
+import config
 
 class AudioService:
     def __init__(self):
-        self.recognizer = sr.Recognizer()
-        # Initialize OpenSMILE with eGeMAPSv02 feature set
+        print("⏳ Loading Whisper Model (Base)... This happens only once.")
+        # 'base' is a good balance of speed vs accuracy. 
+        # Use 'tiny' if your PC is very slow, or 'small' if you have a GPU.
+        self.model = whisper.load_model("base")
 
-        self.recognizer.energy_threshold = 300
-        self.recognizer.dynamic_energy_threshold = True
-        self.recognizer.pause_threshold = 1.5
+    def extract_audio_from_video(self, video_path):
+        """
+        Extracts audio from video file and saves as .wav for Praat analysis
+        """
+        try:
+            audio_path = video_path.replace(".mp4", ".wav").replace(".webm", ".wav")
+            # Librosa load automatically converts to mono/wav format in memory
+            # But Praat needs a physical file. We use ffmpeg via system command or moviepy.
+            # For MVP simplicity, let's assume ffmpeg is installed or use moviepy if needed.
+            # Here is a robust way using moviepy (which installs with librosa usually)
+            from moviepy import VideoFileClip
+            
+            video = VideoFileClip(video_path)
+            video.audio.write_audiofile(audio_path, logger=None)
+            return audio_path
+        except Exception as e:
+            print(f"❌ Audio Extraction Error: {e}")
+            return None
+
+    def analyze(self, video_path):
+        """
+        Main function that coordinates the lab analysis.
+        """
+        print(f"🎙️ Analyzing Audio: {video_path}")
         
-        self.smile = opensmile.Smile(
-            feature_set=opensmile.FeatureSet.eGeMAPSv02,
-            feature_level=opensmile.FeatureLevel.Functionals,
-        )
+        # 1. Extract .wav file (Required for Praat)
+        audio_path = self.extract_audio_from_video(video_path)
+        if not audio_path: return {"error": "Audio extraction failed"}
 
-    def listen_and_analyze(self):
-        result = {
-            "text": "",
-            "sentiment": "Neutral",
-            "energy": "Medium",
-            "status": "Listening"
+        # 2. Transcription (The Content)
+        result = self.model.transcribe(audio_path)
+        transcript = result["text"].strip()
+        print(f"📝 Transcript: {transcript[:50]}...")
+
+        # 3. Scientific Metrics (The Physics)
+        metrics = self._get_acoustic_metrics(audio_path, transcript)
+        
+        # Cleanup temp file
+        if os.path.exists(audio_path):
+            os.remove(audio_path)
+            
+        return {
+            "transcript": transcript,
+            "metrics": metrics
         }
 
-        with sr.Microphone() as source:
-            try:
-                self.recognizer.adjust_for_ambient_noise(source, duration=0.5)
-                print(">>> LISTENING...")
+    def _get_acoustic_metrics(self, audio_path, transcript):
+        """
+        Uses Parselmouth (Praat) to detect Jitter/Shimmer/Pitch
+        """
+        sound = parselmouth.Sound(audio_path)
+        duration = sound.get_total_duration()
+        
+        # A. Speaking Rate (WPM)
+        word_count = len(transcript.split())
+        wpm = (word_count / duration) * 60 if duration > 0 else 0
+        
+        # B. Pitch Analysis (F0)
+        pitch = sound.to_pitch()
+        pitch_values = pitch.selected_array['frequency']
+        # Remove zeros (unvoiced parts like silence)
+        pitch_values = pitch_values[pitch_values != 0]
+        
+        if len(pitch_values) == 0:
+            return {"wpm": 0, "jitter": 0, "pitch_var": 0}
 
-                audio = self.recognizer.listen(source, timeout=None, phrase_time_limit=8)
-                print(">>> PROCESSING...")
+        avg_pitch = np.mean(pitch_values)
+        pitch_std = np.std(pitch_values) # High SD = Expressive; Low SD = Monotone
 
-                # 1. Save audio to temp file for OpenSMILE
-                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_wav:
-                    temp_wav.write(audio.get_wav_data())
-                    temp_wav_path = temp_wav.name
+        # C. Jitter (Nervousness Micro-Tremors)
+        # We create a "PointProcess" to analyze the pulses of the vocal cords
+        point_process = call(sound, "To PointProcess (periodic, cc)", 75, 500)
+        
+        # "Local Jitter" is the standard metric for vocal stability
+        # Normal is < 1%. Stress/Pathology is > 1.04%
+        jitter = call(point_process, "Get jitter (local)", 0, 0, 0.0001, 0.02, 1.3) * 100
 
-                # 2. Extract Features using OpenSMILE
-                try:
-                    df = self.smile.process_file(temp_wav_path)
-                    
-                    # Extract Features
-                    # Pitch: F0semitoneFrom27.5Hz_sma3nz_amean
-                    # Loudness: loudness_sma3_amean
-                    # Jitter: jitterLocal_sma3nz_amean
-                    # Shimmer: shimmerLocaldB_sma3nz_amean
-                    # Rate of Speech: VoicedSegmentsPerSec
-                    
-                    pitch = df['F0semitoneFrom27.5Hz_sma3nz_amean'].values[0]
-                    loudness = df['loudness_sma3_amean'].values[0]
-                    jitter = df['jitterLocal_sma3nz_amean'].values[0]
-                    shimmer = df['shimmerLocaldB_sma3nz_amean'].values[0]
-                    speech_rate = df['VoicedSegmentsPerSec'].values[0]
-                    
-                    print(f"Pitch: {pitch:.2f}, Loudness: {loudness:.2f}, Jitter: {jitter:.4f}, Shimmer: {shimmer:.2f}, Rate: {speech_rate:.2f}")
+        # D. Pauses (Silence detection)
+        # Simple logic: count segments with zero pitch that are longer than 0.5s
+        # (For MVP, we stick to basic WPM as the fluency proxy)
 
-                    # Enhanced Heuristic Emotion Classification
-                    # Thresholds are estimated and may need tuning
-                    
-                    # Happy/Excited: High Pitch, High Loudness, Fast Rate, Stable Voice (Low Jitter)
-                    if pitch > 30 and loudness > 1.5 and speech_rate > 2.5 and jitter < 0.02:
-                        result["sentiment"] = "Happy/Excited"
-                        result["energy"] = "High"
-                    
-                    # Angry: High Pitch, High Loudness, Fast Rate, Rough Voice (High Jitter)
-                    elif pitch > 30 and loudness > 1.5 and speech_rate > 2.5 and jitter > 0.03:
-                        result["sentiment"] = "Angry"
-                        result["energy"] = "High"
-                        
-                    # Fear/Nervous: High Pitch, Low Loudness, Fast Rate, Shaky Voice (High Jitter)
-                    elif pitch > 30 and loudness < 0.5 and speech_rate > 2.5 and jitter > 0.03:
-                        result["sentiment"] = "Fear/Nervous"
-                        result["energy"] = "Low"
-                        
-                    # Sad: Low Pitch, Low Loudness, Slow Rate, Shaky Voice
-                    elif pitch < 20 and loudness < 0.5 and speech_rate < 1.5:
-                        result["sentiment"] = "Sad"
-                        result["energy"] = "Low"
-                        
-                    else:
-                        result["sentiment"] = "Neutral"
-                        result["energy"] = "Medium"
-
-                except Exception as e:
-                    print(f"OpenSMILE Error: {e}")
-                    # Fallback to simple energy
-                    audio_data = np.frombuffer(audio.get_raw_data(), dtype=np.int16)
-                    rms = np.sqrt(np.mean(audio_data ** 2))
-                    if rms < config.RMS_THRESHOLD_LOW:
-                        result["energy"] = "Low"
-                    elif rms > config.RMS_THRESHOLD_HIGH:
-                        result["energy"] = "High"
-                    else:
-                        result["energy"] = "Medium"
-
-                finally:
-                    # Cleanup temp file
-                    if os.path.exists(temp_wav_path):
-                        os.remove(temp_wav_path)
-
-                # 3. STT (Speech to Text)
-                try:
-                    text = self.recognizer.recognize_google(audio)
-                    result["text"] = text
-                    
-                except sr.UnknownValueError:
-                    pass # No speech detected
-
-                result["status"] = "Success"
-
-            except Exception as e:
-                print(f"Audio Error: {e}")
-                result["status"] = "Error"
-
-        return result
+        return {
+            "wpm": int(wpm),
+            "avg_pitch_hz": round(avg_pitch, 2),
+            "pitch_variance": round(pitch_std, 2),
+            "jitter_percent": round(jitter, 2),
+            "duration_seconds": round(duration, 2)
+        }

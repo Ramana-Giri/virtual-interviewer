@@ -1,8 +1,0 @@
-flask
-opencv-python
-SpeechRecognition
-textblob
-numpy
-pyttsx3
-pyaudio
-opensmile

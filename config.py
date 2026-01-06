@@ -1,44 +1,18 @@
 # config.py
+import os
 
-# --- AUDIO THRESHOLDS ---
-DEBUG = True
-RMS_THRESHOLD_LOW = 100 
-RMS_THRESHOLD_HIGH = 800
+# --- API KEYS ---
+# Replace with your actual key from Google AI Studio
+GEMINI_API_KEY = "AIzaSyCYRcKPYCRYS-YMnGu8aFcVmfDkaYGs2d4"
 
-# --- SMART QUESTION BANK ---
-# Format: "Topic Keyword": ["Question 1", "Question 2"]
-# We will search the User's Answer for these keywords.
-TOPIC_QUESTIONS = {
-    "python": [
-        "You mentioned Python. Can you explain how memory management works in Python?",
-        "What are Python Decorators and how have you used them?",
-        "Difference between list and tuple?"
-    ],
-    "project": [
-        "That sounds like a great project. What was the most difficult technical challenge you faced?",
-        "How did you handle version control and collaboration in your project?"
-    ],
-    "team": [
-        "Working in teams can be tough. How do you handle conflicts with teammates?",
-        "Describe a time you had to lead a team initiative."
-    ],
-    "java": [
-        "Since you know Java, explain the difference between JDK, JRE, and JVM.",
-        "How does Garbage Collection work in Java?"
-    ],
-    "default_hard": [
-        "Let's dive deeper. Explain the concept of REST APIs.",
-        "How do you optimize a slow database query?"
-    ],
-    "default_easy": [
-        "What is your favorite programming language and why?",
-        "Explain the concept of OOPs."
-    ],
-    "comfort": [
-        "You seem a bit stressed. Let's take a step back. What do you do for fun?",
-        "No worries. Take your time. Tell me about your hobbies."
-    ]
-}
+# --- THRESHOLDS (The Science Numbers) ---
+# Acoustic
+NERVOUS_WPM_THRESHOLD = 160      # > 160 WPM = Rushing/Anxious
+FREEZE_PAUSE_DURATION = 3.0      # > 3.0s silence = Cognitive Load/Freezing
+JITTER_THRESHOLD = 0.015         # > 1.5% Jitter = Voice Tremors (Nervousness)
 
-# The starting question
-START_QUESTION = "Hello. I am your AI interviewer. Please introduce yourself and mention your technical skills."
+# Visual
+MIN_EYE_CONTACT_PERCENT = 60     # < 60% = Low Confidence
+
+# Content
+MIN_RELEVANCE_SCORE = 70         # < 70% = Off-topic / Vague
