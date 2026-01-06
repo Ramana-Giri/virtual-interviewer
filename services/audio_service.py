@@ -5,6 +5,7 @@ import numpy as np
 import librosa
 import os
 import config
+from moviepy import VideoFileClip
 
 class AudioService:
     def __init__(self):
@@ -23,7 +24,7 @@ class AudioService:
             # But Praat needs a physical file. We use ffmpeg via system command or moviepy.
             # For MVP simplicity, let's assume ffmpeg is installed or use moviepy if needed.
             # Here is a robust way using moviepy (which installs with librosa usually)
-            from moviepy import VideoFileClip
+
             
             video = VideoFileClip(video_path)
             video.audio.write_audiofile(audio_path, logger=None)
@@ -43,9 +44,12 @@ class AudioService:
         if not audio_path: return {"error": "Audio extraction failed"}
 
         # 2. Transcription (The Content)
-        result = self.model.transcribe(audio_path)
+        result = self.model.transcribe(
+            audio_path,
+            fp16=False
+        )
         transcript = result["text"].strip()
-        print(f"📝 Transcript: {transcript[:50]}...")
+        print(f"📝 Transcript: {transcript[:]}")
 
         # 3. Scientific Metrics (The Physics)
         metrics = self._get_acoustic_metrics(audio_path, transcript)
