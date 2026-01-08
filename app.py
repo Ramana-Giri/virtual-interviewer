@@ -72,59 +72,58 @@ def submit_response():
         print(f"▶️ Processing Q{current_q_index} for Session {session_id}...")
         audio_data = audio_svc.analyze(video_path)
         video_data = video_svc.analyze(video_path)
-        return jsonify({
-            "scientific_metrics": {
-                "acoustic": audio_data['metrics'],
-                "visual": video_data,
-                # "content": Removed
-            }
-        })
+        # return jsonify({
+        #     "scientific_metrics": {
+        #         "acoustic": audio_data['metrics'],
+        #         "visual": video_data
+        #     }
+        # })
 
         # --- B. GET HISTORY & CONTEXT ---
         # We need the role to prompt Gemini correctly
-        # session_info, _ = database.get_full_report_data(session_id)
-        # chat_history = database.get_chat_history(session_id)
+        session_info, _ = database.get_full_report_data(session_id)
+        chat_history = database.get_chat_history(session_id)
 
         # --- C. GEMINI ANALYSIS (Analyze + Gen Next Q) ---
-        # print("🧠 Asking Gemini...")
-        # llm_result = llm_svc.analyze_response(
-        #     transcript=audio_data['transcript'],
-        #     audio_metrics=audio_data['metrics'],
-        #     video_metrics=video_data,
-        #     current_question=current_q_text,
-        #     chat_history=chat_history,
-        #     target_role=session_info['target_role']
-        # )
+        print("🧠 Asking Gemini...")
+        llm_result = llm_svc.analyze_response(
+            transcript=audio_data['transcript'],
+            audio_metrics=audio_data['metrics'],
+            video_metrics=video_data,
+            current_question=current_q_text,
+            chat_history=chat_history,
+            target_role=session_info['target_role']
+        )
 
         # --- D. SAVE TO DB ---
-        # database.save_response(
-        #     session_id=session_id,
-        #     q_index=current_q_index,
-        #     question=current_q_text,
-        #     transcript=audio_data['transcript'],
-        #     audio_metrics=audio_data['metrics'],
-        #     video_metrics=video_data,
-        #     ai_feedback=llm_result['feedback'],
-        #     ai_score=llm_result['score']
-        # )
+        database.save_response(
+            session_id=session_id,
+            q_index=current_q_index,
+            question=current_q_text,
+            transcript=audio_data['transcript'],
+            audio_metrics=audio_data['metrics'],
+            video_metrics=video_data,
+            ai_feedback=llm_result['feedback'],
+            ai_score=llm_result['score']
+        )
 
         # --- E. DECIDE NEXT STEP ---
         # Cleanup video file to save space (Ephemeral)
         if os.path.exists(video_path):
             os.remove(video_path)
 
-        # if current_q_index >= 5:
-        #     return jsonify({
-        #         "status": "completed",
-        #         "message": "Interview Finished. Please request the report."
-        #     })
-        # else:
-        #     return jsonify({
-        #         "status": "next_question",
-        #         "next_question": llm_result['next_question'],
-        #         "next_index": current_q_index + 1
-        #     })
-
+        if current_q_index >= 5:
+            return jsonify({
+                "status": "completed",
+                "message": "Interview Finished. Please request the report."
+            })
+        else:
+            return jsonify({
+                "status": "next_question",
+                "next_question": llm_result['next_question'],
+                "next_index": current_q_index + 1
+            })
+    #
     except Exception as e:
         print(f"🔥 Error: {e}")
         return jsonify({"error": str(e)}), 500
