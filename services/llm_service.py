@@ -12,17 +12,33 @@ class LLMService:
         # 1.5 Flash is the best balance of Speed/Cost/Intelligence
         self.model = genai.GenerativeModel('gemini-2.5-flash-lite')
 
-    def analyze_response(self, transcript, audio_metrics, video_metrics, current_question, chat_history, target_role):
+    def analyze_response(self, transcript, timeline, audio_summary, video_summary, current_question, chat_history, target_role):
         """
         Analyzes the answer AND generates the next question to save API calls.
         """
 
-        # 1. Construct Context from History
         history_text = ""
         if chat_history:
             history_text = "PREVIOUS CONVERSATION:\n"
             for item in chat_history:
                 history_text += f"- Q: {item.get('q_text', '')}\n  A: {item.get('transcript', '')}\n"
+
+        # 2. Format the Timeline for the Prompt
+        # We convert the JSON list into a readable story for the LLM
+        timeline_str = ""
+        for event in timeline:
+            t = event['timestamp']
+            word = event.get('spoken', event.get('event', ''))
+            beh = event.get('behavior', {})
+
+            if event.get('event') == "LONG_PAUSE":
+                timeline_str += f"[{t}] (SILENCE for {event.get('duration')}): Candidate was {beh}\n"
+            else:
+                # Normal speech event
+                posture = beh.get('posture', 'Static')
+                eye = beh.get('eye_contact', 'Screen')
+                face = beh.get('expression', 'Neutral')
+                timeline_str += f"[{t}] Spoke '{word}': Head={posture}, Eyes={eye}, Face={face}\n"
 
         prompt = f"""
         You are a Senior Technical Recruiter interviewing a candidate for a {target_role} role.
@@ -33,11 +49,14 @@ class LLMService:
         - Question Asked: "{current_question}"
         - Candidate Answer: "{transcript}"
         
+        BEHAVIORAL TIMELINE (The "Game Tape"):
+        {timeline_str}
+        
         LAB DATA (Scientific Measurements):
-        - ACOUSTIC: {json.dumps(audio_metrics)} 
+        - ACOUSTIC: {json.dumps(audio_summary)} 
           (Note: Jitter > 1.0% = Nervousness; WPM > 170 = Rushing)
-        - VISUAL: {json.dumps(video_metrics)} 
-          (Note: Eye Contact < 60% = Low Confidence; Dominant Emotion = {video_metrics.get('dominant_emotion')})
+        - VISUAL: {json.dumps(video_summary)} 
+          (Note: Eye Contact < 60% = Low Confidence; Dominant Emotion = {video_summary.get('dominant_emotion')})
 
         TASK:
         Generate a JSON response with:
