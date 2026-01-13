@@ -27,7 +27,7 @@ Prerequisites: Python 3.11+
 
 1. **Clone the repository**
    ```bash
-   git clone <your-repo-url>
+   git clone https://github.com/Ramana-Giri/virtual-interviewer.git
    cd virtual-interviewer
    ```
 
