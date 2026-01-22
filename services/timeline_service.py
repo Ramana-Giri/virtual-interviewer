@@ -37,7 +37,6 @@ class TimelineService:
             end_t = item['end']
 
             # A. SLICE: Get sensors during this specific word/sentence
-            # Filter frames that happened between start_t and end_t
             v_frames = [f for f in video_log if start_t <= f['timestamp'] <= end_t]
             a_frames = [f for f in audio_log if start_t <= f['timestamp'] <= end_t]
 
@@ -47,8 +46,10 @@ class TimelineService:
 
             # --- Vision Metrics ---
             # 1. Head Movement
-            avg_pitch = np.mean([f['pitch'] for f in v_frames])
-            avg_yaw = np.mean([f['yaw'] for f in v_frames])
+            # Safety check for empty lists to prevent NaN
+            avg_pitch = np.mean([f['pitch'] for f in v_frames]) if v_frames else 0
+            avg_yaw = np.mean([f['yaw'] for f in v_frames]) if v_frames else 0
+
             head_action = "Static"
             if avg_pitch > 10:
                 head_action = "Nodding (Agreeing)"
@@ -68,13 +69,16 @@ class TimelineService:
             micro_expression = max(set(emotions), key=emotions.count) if emotions else "Neutral"
 
             # --- Audio Metrics ---
-            # 4. Tone
-            avg_audio_pitch = np.mean([f['pitch'] for f in a_frames if f['pitch'] > 0]) if a_frames else 0
-            # If pitch is higher than usual (relative to global baseline), could be stress
+            # 4. Tone (CRASH FIX HERE 🛠️)
+            # Filter for voiced frames only (pitch > 0)
+            valid_pitches = [f['pitch'] for f in a_frames if f['pitch'] > 0]
+
+            if valid_pitches:
+                avg_audio_pitch = np.mean(valid_pitches)
+            else:
+                avg_audio_pitch = 0  # Default to 0 if silence
 
             # C. CONSTRUCT EVENT (The "Insight")
-            # We only log "Significant" events to save tokens for Gemini
-
             is_significant = (
                     head_action != "Static" or
                     dominant_gaze != "Screen" or
@@ -90,24 +94,21 @@ class TimelineService:
                         "posture": head_action,
                         "eye_contact": dominant_gaze,
                         "expression": micro_expression,
-                        "voice_pitch": f"{int(avg_audio_pitch)}Hz"
+                        "voice_pitch": f"{int(avg_audio_pitch)}Hz"  # Safe now!
                     }
                 }
                 timeline_events.append(event)
 
-        # 3. PAUSE ANALYSIS (The "Space Between Words")
-        # Detect awkward silences > 1.5 seconds
+        # 3. PAUSE ANALYSIS
         for i in range(len(anchors) - 1):
             curr_end = anchors[i]['end']
             next_start = anchors[i + 1]['start']
             gap = next_start - curr_end
 
             if gap > 1.5:
-                # Analyze what happened during the silence
                 silent_v_frames = [f for f in video_log if curr_end <= f['timestamp'] <= next_start]
                 if not silent_v_frames: continue
 
-                # Did they look away to think?
                 gaze_away = sum(1 for f in silent_v_frames if f['gaze'] != "Screen")
                 gaze_state = "Staring Blankly" if gaze_away < len(silent_v_frames) / 2 else "Looking Away (Thinking)"
 
@@ -118,11 +119,9 @@ class TimelineService:
                     "behavior": gaze_state
                 })
 
-        # Sort chronologically
         timeline_events.sort(key=lambda x: float(x['timestamp'].split('s')[0]))
 
         return timeline_events
-
 
 # --- TEST BLOCK ---
 if __name__ == "__main__":

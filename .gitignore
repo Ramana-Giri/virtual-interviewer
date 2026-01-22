@@ -5,8 +5,8 @@ __pycache__/
 
 # Virtual Environment
 .venv/
-.env/
-.env
+services/.env/
+services/.env
 
 uploads/
 

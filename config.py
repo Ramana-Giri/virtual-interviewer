@@ -1,13 +1,3 @@
-# config.py
-from dotenv import load_dotenv
-import os
-
-load_dotenv()
-# --- API KEYS ---
-# Replace with your actual key from Google AI Studio
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-
 # --- THRESHOLDS (The Science Numbers) ---
 # Acoustic
 NERVOUS_WPM_THRESHOLD = 160      # > 160 WPM = Rushing/Anxious

@@ -1,10 +1,12 @@
 import google.generativeai as genai
-import config
 import json
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Configure Gemini
-genai.configure(api_key=config.GEMINI_API_KEY)
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 class LLMService:
     def __init__(self):
@@ -42,27 +44,41 @@ class LLMService:
 
         prompt = f"""
         You are a Senior Technical Recruiter interviewing a candidate for a {target_role} role.
+        CURRENT STATUS: Question {current_question} of 5.
 
         {history_text}
+        
+        PRIME DIRECTIVE (CRITICAL):
+        1. **IGNORE IRRELEVANT BACKSTORY:** If the candidate talks about teaching, hobbies, or unrelated jobs, do NOT ask follow-up questions about them.
+        2. **PIVOT TO THE ROLE:** Acknowledge their answer briefly, then immediately transition to a core competency required for a {target_role} (e.g., Databases, APIs, Algorithms, System Design).
+        3. **CHECKLIST:** Ensure you have gathered evidence on the core skills for {target_role} by the end of Question 5.
+        
+        DECISION LOGIC FOR "next_question":
+        - IF answer was IRRELEVANT: Pivot hard. (e.g., "That's interesting context. However, for this Java role, we need strong backend skills. Tell me about...")
+        - IF answer was GOOD: Move to the next required skill in your checklist (e.g., "Great. Now let's talk about Cloud deployment.")
+        - IF Question 5 of 5: This is the last question. Wrap up or ask one final "Hail Mary" technical check.
         
         CONTEXT:
         - Question Asked: "{current_question}"
         - Candidate Answer: "{transcript}"
         
-        BEHAVIORAL TIMELINE (The "Game Tape"):
+        BEHAVIORAL TIMELINE:
         {timeline_str}
         
         LAB DATA (Scientific Measurements):
         - ACOUSTIC: {json.dumps(audio_summary)} 
-          (Note: Jitter > 1.0% = Nervousness; WPM > 170 = Rushing)
+          (Note: Jitter > 1.5% = Nervousness; WPM > 170 = Rushing)
         - VISUAL: {json.dumps(video_summary)} 
           (Note: Eye Contact < 60% = Low Confidence; Dominant Emotion = {video_summary.get('dominant_emotion')})
 
         TASK:
         Generate a JSON response with:
-        1. Analyze the candidate's performance (Mental State + Content).
-        2. "next_question": A follow-up question. If they struggled, ask something easier. If they did well, dig deeper.
-        3. "score": A score out of 10 for this specific answer.
+        - Analyze the candidate's performance (Mental State + Content).
+        - Check if the answer is relevant to the question asked
+        - Check if the candidate doesn't contradict with his previous answers.
+        - "next_question": A follow-up question keeping in mind about you are at {current_question} question out of 5 questions to ask and you have to ask the question based on the candidates's answer as well as to check if the candidate posses all the skills and qualities for the role {target_role}
+        - if {current_question} == 5, then you end the interview and give a final thank you for attending the interview in the place of next question.
+        - "score": A score out of 10 for this specific answer.
         
         OUTPUT FORMAT: JSON Only.
         {{
@@ -114,3 +130,55 @@ class LLMService:
             return json.loads(response.text)
         except Exception as e:
             return {"error": str(e)}
+
+
+# ... (rest of your file)
+
+if __name__ == "__main__":
+    print("🧠 Initializing LLM Service Test...")
+
+    # 1. Setup Mock Data (Simulating a "Game Tape")
+    mock_transcript = "I built a task management app using Java Spring Boot. It was challenging because I had to learn Hibernate, but I eventually solved the database connection issues."
+
+    mock_timeline = [
+        {
+            "timestamp": "0.0s - 3.5s",
+            "spoken": "I built a task management app",
+            "behavior": {"posture": "Nodding", "eye_contact": "Screen", "expression": "Happy"}
+        },
+        {
+            "timestamp": "3.6s - 6.0s",
+            "spoken": "It was challenging",
+            "behavior": {"posture": "Static", "eye_contact": "Down", "expression": "Neutral"}
+        },
+        {
+            "timestamp": "6.1s - 9.0s",
+            "spoken": "solved the database connection",
+            "behavior": {"posture": "Nodding", "eye_contact": "Screen", "expression": "Happy"}
+        }
+    ]
+
+    mock_audio_stats = {"jitter_percent": 0.5, "wpm": 130}
+    mock_video_stats = {"gaze_screen_pct": 85, "expressiveness": 50, "dominant_emotion": "Happy"}
+
+    # 2. Run the Service
+    try:
+        service = LLMService()
+
+        print("\n--- 🧪 Sending Prompt to Gemini... ---")
+        result = service.analyze_response(
+            transcript=mock_transcript,
+            timeline=mock_timeline,
+            audio_summary=mock_audio_stats,
+            video_summary=mock_video_stats,
+            current_question="Tell me about a project you are proud of.",
+            chat_history=[],
+            target_role="Junior Java Developer"
+        )
+
+        print("\n✅ GEMINI RESPONSE:")
+        print(json.dumps(result, indent=2))
+
+    except Exception as e:
+        print(f"\n❌ TEST FAILED: {e}")
+        print("Check your GEMINI_API_KEY in .env file!")

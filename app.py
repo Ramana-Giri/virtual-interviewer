@@ -2,7 +2,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
 import uuid
-import database  # Import our new DB manager
+import database
 
 # Services
 from services.audio_service import AudioService
@@ -86,9 +86,11 @@ def submit_response():
         # Attach timeline to video_data so it gets saved to DB (for Showoff reports)
         video_data['summary']['timeline_snippet'] = timeline[:5]  # Save first 5 events for preview
 
+        chat_history = ""
         # --- B. GET HISTORY & CONTEXT ---
         session_info, _ = database.get_full_report_data(session_id)
-        chat_history = database.get_chat_history(session_id)
+        if current_q_index != 1:
+            chat_history = database.get_chat_history(session_id)
 
         # --- C. GEMINI ANALYSIS ---
         print("🧠 Asking Gemini...")
@@ -111,6 +113,7 @@ def submit_response():
             transcript=audio_data['transcript'],
             audio_metrics=audio_data['global_metrics'],
             video_metrics=video_data['summary'],  # Includes timeline snippet now
+            timeline=timeline,
             ai_feedback=llm_result['feedback'],
             ai_score=llm_result['score']
         )

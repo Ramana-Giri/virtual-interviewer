@@ -34,6 +34,7 @@ def init_db():
             -- Metrics (Stored as JSON strings for flexibility)
             audio_metrics TEXT,
             video_metrics TEXT,
+            timeline_json TEXT, 
 
             -- AI Analysis
             ai_feedback TEXT,
@@ -57,13 +58,13 @@ def create_session(session_id, name, role):
     conn.close()
 
 
-def save_response(session_id, q_index, question, transcript, audio_metrics, video_metrics, ai_feedback, ai_score):
+def save_response(session_id, q_index, question, transcript, audio_metrics, video_metrics, timeline, ai_feedback, ai_score):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     c.execute('''
-        INSERT OR REPLACE INTO responses 
-        (session_id, question_index, question_text, transcript, audio_metrics, video_metrics, ai_feedback, ai_score)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO responses 
+        (session_id, question_index, question_text, transcript, audio_metrics, video_metrics, timeline_json, ai_feedback, ai_score)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         session_id,
         q_index,
@@ -71,6 +72,7 @@ def save_response(session_id, q_index, question, transcript, audio_metrics, vide
         transcript,
         json.dumps(audio_metrics),
         json.dumps(video_metrics),
+        json.dumps(timeline),
         ai_feedback,
         ai_score
     ))
