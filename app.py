@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from functools import wraps
+from concurrent.futures import ThreadPoolExecutor
 import os
 import uuid
 import re
@@ -329,9 +330,13 @@ def submit_response():
     try:
         print(f"▶️  Processing Q{current_q_index} [{current_q_type}] — session {session_id}")
 
-        video_data   = video_svc.analyze(video_path)
-        audio_data   = audio_svc.analyze(video_path)
-        timeline     = timeline_svc.fuse(audio_data, video_data)
+        # Run video and audio analysis in parallel to cut wall-clock time ~50%
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            f_video = pool.submit(video_svc.analyze, video_path)
+            f_audio = pool.submit(audio_svc.analyze, video_path)
+            video_data = f_video.result()
+            audio_data = f_audio.result()
+        timeline = timeline_svc.fuse(audio_data, video_data)
 
         transcript     = audio_data.get('transcript', '')
         global_metrics = audio_data.get('global_metrics', {
