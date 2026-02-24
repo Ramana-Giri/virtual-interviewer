@@ -19,7 +19,7 @@ CORS(app, supports_credentials=True)
 
 database.init_db()
 
-print("🚀 Booting up AI Services...")
+print("🚀 Booting PrepSpark AI Services…")
 audio_svc = AudioService()
 video_svc = VideoService()
 timeline_svc = TimelineService()
@@ -29,6 +29,15 @@ tts_svc = TTSService()
 UPLOAD_FOLDER = 'uploads'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
+# Question type schedule — matches frontend Q_TYPES map
+Q_TYPE_SCHEDULE = {
+    1: 'intro',
+    2: 'technical',
+    3: 'technical',
+    4: 'technical',
+    5: 'behavioural'
+}
+
 
 # ─────────────────────────────────────────────
 # HELPERS
@@ -37,8 +46,7 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 def require_auth(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        auth_header = request.headers.get("Authorization", "")
-        token = auth_header.replace("Bearer ", "").strip()
+        token = request.headers.get("Authorization", "").replace("Bearer ", "").strip()
         user_id = database.validate_token(token)
         if not user_id:
             return jsonify({"error": "Unauthorized. Please log in."}), 401
@@ -48,7 +56,6 @@ def require_auth(f):
 
 
 def speak(text: str) -> str | None:
-    """Synthesizes text to base64 MP3. Returns None on failure."""
     try:
         audio_bytes = tts_svc.synthesize(text, voice="onyx")
         if audio_bytes:
@@ -56,21 +63,6 @@ def speak(text: str) -> str | None:
     except Exception as e:
         print(f"⚠️ TTS failed (non-fatal): {e}")
     return None
-
-
-def safe_get(d: dict, *keys, default=""):
-    """Safely get nested dict value with a default."""
-    for k in keys:
-        if isinstance(d, dict):
-            d = d.get(k, default)
-        else:
-            return default
-    return d if d is not None else default
-
-@app.route("/")
-def home():
-    return render_template("index.html")
-
 
 # ─────────────────────────────────────────────
 # AUTH
@@ -106,14 +98,11 @@ def login():
     data = request.get_json() or {}
     identifier = data.get('username_or_email', '').strip()
     password = data.get('password', '')
-
     if not identifier or not password:
         return jsonify({"error": "Username/email and password are required."}), 400
-
     success, result = database.login_user(identifier, password)
     if not success:
         return jsonify({"error": result}), 401
-
     return jsonify({
         "message": "Login successful.",
         "token": result["token"],
@@ -154,16 +143,16 @@ def start_interview():
     database.create_session(session_id, name, role, user_id=request.user_id)
 
     first_question = (
-        f"Hello {name}. I see you are applying for the {role} position. "
-        f"Let's begin. Please tell me about yourself and your background."
+        f"Hello {name}, welcome to your PrepSpark practice session for the {role} role. "
+        f"Let's start with a simple one — please tell me about yourself and your background."
     )
 
     audio_b64 = speak(first_question)
-
     return jsonify({
         "session_id": session_id,
         "question": first_question,
         "question_index": 1,
+        "question_type": "intro",
         "total_questions": 5,
         "audio_b64": audio_b64
     })
@@ -181,6 +170,8 @@ def submit_response():
 
     session_id = request.form.get('session_id', '').strip()
     current_q_text = request.form.get('question_text', '').strip()
+    current_q_type = request.form.get('question_type', 'technical').strip()
+
     try:
         current_q_index = int(request.form.get('question_index', 1))
     except ValueError:
@@ -193,58 +184,56 @@ def submit_response():
     if not session_info:
         return jsonify({"error": "Session not found."}), 404
     if session_info.get('user_id') != request.user_id:
-        return jsonify({"error": "Access denied to this session."}), 403
+        return jsonify({"error": "Access denied."}), 403
 
     video_file = request.files['video']
-    # Always save as .webm to match what Chrome actually sends
     video_path = os.path.join(UPLOAD_FOLDER, f"{session_id}_{current_q_index}.webm")
     video_file.save(video_path)
 
     try:
-        print(f"▶️ Processing Q{current_q_index} for Session {session_id}...")
+        print(f"▶️  Processing Q{current_q_index} [{current_q_type}] for session {session_id}…")
 
-        # ── Video Analysis ──
         video_data = video_svc.analyze(video_path)
-
-        # ── Audio Analysis (now returns safe defaults on failure) ──
         audio_data = audio_svc.analyze(video_path)
+        timeline = timeline_svc.fuse(audio_data, video_data)
 
-        # audio_data is guaranteed to have these keys now
         transcript = audio_data.get('transcript', '')
         global_metrics = audio_data.get('global_metrics', {
             'wpm': 0, 'avg_pitch_hz': 0, 'pitch_variance': 0,
             'jitter_percent': 0, 'duration_seconds': 0
         })
-
-        # ── Timeline Fusion ──
-        timeline = timeline_svc.fuse(audio_data, video_data)
         video_summary = video_data.get('summary', {})
         video_summary['timeline_snippet'] = timeline[:5]
 
-        # ── Chat History ──
         chat_history = database.get_chat_history(session_id) if current_q_index > 1 else []
 
-        # ── Gemini Analysis ──
-        print("🧠 Asking Gemini...")
+        # Determine what the next question type should be
+        next_index = current_q_index + 1
+        next_q_type = Q_TYPE_SCHEDULE.get(next_index, 'technical')
+
+        print("🧠 AI evaluation…")
         llm_result = llm_svc.analyze_response(
             transcript=transcript,
             timeline=timeline,
             audio_summary=global_metrics,
             video_summary=video_summary,
             current_question=current_q_text,
+            current_q_type=current_q_type,
+            next_q_type=next_q_type,
             chat_history=chat_history,
-            target_role=session_info['target_role']
+            target_role=session_info['target_role'],
+            current_q_index=current_q_index
         )
 
         ai_feedback = llm_result.get('feedback', 'No feedback generated.')
         ai_score = llm_result.get('score', 0)
         next_question = llm_result.get('next_question', '')
 
-        # ── Save to DB ──
         database.save_response(
             session_id=session_id,
             q_index=current_q_index,
             question=current_q_text,
+            question_type=current_q_type,
             transcript=transcript,
             audio_metrics=global_metrics,
             video_metrics=video_summary,
@@ -255,21 +244,20 @@ def submit_response():
 
     except Exception as e:
         print(f"🔥 Processing Error: {e}")
-        import traceback
-        traceback.print_exc()
+        import traceback; traceback.print_exc()
         if os.path.exists(video_path):
             os.remove(video_path)
         return jsonify({"error": f"Processing failed: {str(e)}"}), 500
-
     finally:
         if os.path.exists(video_path):
             os.remove(video_path)
 
-    # ── Response ──
     if current_q_index >= 5:
+        # Trigger report generation and cache it now
+        _generate_and_cache_report(session_id, session_info)
         return jsonify({
             "status": "completed",
-            "message": "Interview complete.",
+            "message": "Session complete.",
             "transcript": transcript
         })
     else:
@@ -277,15 +265,63 @@ def submit_response():
         return jsonify({
             "status": "next_question",
             "next_question": next_question,
-            "next_index": current_q_index + 1,
+            "next_index": next_index,
+            "next_type": next_q_type,
             "feedback_preview": ai_feedback,
             "audio_b64": audio_b64,
             "transcript": transcript
         })
 
 
+def _generate_and_cache_report(session_id: str, session_info: dict):
+    """Generates the final Gemini report and saves it to DB immediately after Q5."""
+    try:
+        print(f"📄 Generating and caching report for session {session_id}…")
+        _, responses = database.get_full_report_data(session_id)
+
+        interview_log = []
+        for r in responses:
+            try:
+                audio_m = json.loads(r.get("audio_metrics") or "{}")
+            except Exception:
+                audio_m = {}
+            try:
+                video_m = json.loads(r.get("video_metrics") or "{}")
+            except Exception:
+                video_m = {}
+
+            interview_log.append({
+                "question_index": r.get("question_index"),
+                "question_type": r.get("question_type", "technical"),
+                "question": r.get("question_text"),
+                "transcript": r.get("transcript"),
+                "ai_score": r.get("ai_score", 0),
+                "ai_feedback": r.get("ai_feedback", ""),
+                "audio_metrics": audio_m,
+                "video_metrics": video_m,
+            })
+
+        detailed_report = llm_svc.generate_final_report(interview_log)
+
+        # Build the full payload that the frontend expects
+        full_payload = {
+            "candidate": session_info['candidate_name'],
+            "role": session_info['target_role'],
+            "session_id": session_id,
+            "start_time": session_info.get("start_time", ""),
+            "responses": interview_log,
+            "report": detailed_report
+        }
+
+        database.save_report(session_id, full_payload)
+        print(f"✅ Report cached for session {session_id}")
+    except Exception as e:
+        print(f"⚠️  Report generation failed (non-fatal): {e}")
+        import traceback; traceback.print_exc()
+
+
 # ─────────────────────────────────────────────
-# GENERATE REPORT
+# GENERATE REPORT (load from cache)
 # ─────────────────────────────────────────────
 
 @app.route('/generate_report', methods=['GET'])
@@ -300,10 +336,17 @@ def generate_report():
         return jsonify({"error": "Session not found."}), 404
     if session_info.get('user_id') != request.user_id:
         return jsonify({"error": "Access denied."}), 403
-
     if not responses:
-        return jsonify({"error": "No responses found for this session. Complete the interview first."}), 400
+        return jsonify({"error": "No responses found. Complete the session first."}), 400
 
+    # ── Try cache first ──
+    cached = database.get_cached_report(session_id)
+    if cached:
+        print(f"📋 Serving cached report for session {session_id}")
+        return jsonify(cached)
+
+    # ── Cache miss — generate now (fallback for older sessions) ──
+    print(f"⚙️  No cached report found, generating now for session {session_id}…")
     interview_log = []
     for r in responses:
         try:
@@ -314,9 +357,9 @@ def generate_report():
             video_m = json.loads(r.get("video_metrics") or "{}")
         except Exception:
             video_m = {}
-
         interview_log.append({
             "question_index": r.get("question_index"),
+            "question_type": r.get("question_type", "technical"),
             "question": r.get("question_text"),
             "transcript": r.get("transcript"),
             "ai_score": r.get("ai_score", 0),
@@ -326,15 +369,16 @@ def generate_report():
         })
 
     detailed_report = llm_svc.generate_final_report(interview_log)
-
-    return jsonify({
+    payload = {
         "candidate": session_info['candidate_name'],
         "role": session_info['target_role'],
         "session_id": session_id,
         "start_time": session_info.get("start_time", ""),
         "responses": interview_log,
         "report": detailed_report
-    })
+    }
+    database.save_report(session_id, payload)  # cache it for next time
+    return jsonify(payload)
 
 
 # ─────────────────────────────────────────────
@@ -344,10 +388,6 @@ def generate_report():
 @app.route('/my_interviews', methods=['GET'])
 @require_auth
 def my_interviews():
-    """
-    Returns only COMPLETED interviews (those that have at least one saved response).
-    Incomplete/abandoned sessions are excluded.
-    """
     interviews = database.get_user_interviews(request.user_id)
     return jsonify({"interviews": interviews})
 

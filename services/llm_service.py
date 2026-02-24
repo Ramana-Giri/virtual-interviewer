@@ -5,18 +5,19 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Configure Gemini
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+
 
 class LLMService:
     def __init__(self):
-
-        # 1.5 Flash is the best balance of Speed/Cost/Intelligence
         self.model = genai.GenerativeModel('gemini-2.5-flash-lite')
 
-    def analyze_response(self, transcript, timeline, audio_summary, video_summary, current_question, chat_history, target_role):
+    def analyze_response(self, transcript, timeline, audio_summary, video_summary,
+                         current_question, current_q_type, next_q_type,
+                         chat_history, target_role, current_q_index):
         """
-        Analyzes the answer AND generates the next question to save API calls.
+        Evaluates the candidate's answer and generates the next question.
+        Question flow: Q1=intro, Q2-4=technical, Q5=behavioural.
         """
 
         history_text = ""
@@ -25,68 +26,79 @@ class LLMService:
             for item in chat_history:
                 history_text += f"- Q: {item.get('q_text', '')}\n  A: {item.get('transcript', '')}\n"
 
-        # 2. Format the Timeline for the Prompt
-        # We convert the JSON list into a readable story for the LLM
         timeline_str = ""
         for event in timeline:
             t = event['timestamp']
-            word = event.get('spoken', event.get('event', ''))
-            beh = event.get('behavior', {})
-
             if event.get('event') == "LONG_PAUSE":
-                timeline_str += f"[{t}] (SILENCE for {event.get('duration')}): Candidate was {beh}\n"
+                timeline_str += f"[{t}] SILENCE ({event.get('duration')}): {event.get('behavior', '')}\n"
             else:
-                # Normal speech event
-                posture = beh.get('posture', 'Static')
-                eye = beh.get('eye_contact', 'Screen')
-                face = beh.get('expression', 'Neutral')
-                timeline_str += f"[{t}] Spoke '{word}': Head={posture}, Eyes={eye}, Face={face}\n"
+                beh = event.get('behavior', {})
+                timeline_str += (
+                    f"[{t}] '{event.get('spoken', '')}': "
+                    f"Head={beh.get('posture','Static')}, "
+                    f"Eyes={beh.get('eye_contact','Screen')}, "
+                    f"Face={beh.get('expression','Neutral')}\n"
+                )
+
+        # ── Next question type instructions ──
+        next_q_instructions = {
+            'intro': "Ask a natural self-introduction question.",
+            'technical': (
+                f"Ask a TECHNICAL question relevant to a {target_role}. "
+                f"Focus on core skills: data structures, algorithms, frameworks, system design, "
+                f"databases, or role-specific tools. Make it concrete and progressively deeper "
+                f"than previous questions. Do NOT ask about the candidate's personal life or hobbies."
+            ),
+            'behavioural': (
+                f"This is the FINAL question (Q5). Ask ONE behavioural/situational question using "
+                f"the STAR format (Situation, Task, Action, Result). Examples: "
+                f"'Tell me about a time you handled a difficult deadline', "
+                f"'Describe a situation where you disagreed with a teammate — how did you resolve it?', "
+                f"'Give an example of a project you are proud of and your specific contribution.' "
+                f"Then end with a warm closing like: 'That concludes our session. Thank you for practising with PrepSpark!'"
+            )
+        }.get(next_q_type, "Ask a relevant follow-up technical question.")
+
+        is_last_question = current_q_index >= 5
 
         prompt = f"""
-        You are a Senior Technical Recruiter interviewing a candidate for a {target_role} role.
-        CURRENT STATUS: Question {current_question} of 5.
+You are an AI interview coach at PrepSpark, a candidate practice platform (NOT a real hiring system).
+You are helping a candidate practice for a {target_role} role.
 
-        {history_text}
-        
-        PRIME DIRECTIVE (CRITICAL):
-        1. **IGNORE IRRELEVANT BACKSTORY:** If the candidate talks about teaching, hobbies, or unrelated jobs, do NOT ask follow-up questions about them.
-        2. **PIVOT TO THE ROLE:** Acknowledge their answer briefly, then immediately transition to a core competency required for a {target_role} (e.g., Databases, APIs, Algorithms, System Design).
-        3. **CHECKLIST:** Ensure you have gathered evidence on the core skills for {target_role} by the end of Question 5.
-        
-        DECISION LOGIC FOR "next_question":
-        - IF answer was IRRELEVANT: Pivot hard. (e.g., "That's interesting context. However, for this Java role, we need strong backend skills. Tell me about...")
-        - IF answer was GOOD: Move to the next required skill in your checklist (e.g., "Great. Now let's talk about Cloud deployment.")
-        - IF Question 5 of 5: This is the last question. Wrap up or ask one final "Hail Mary" technical check.
-        
-        CONTEXT:
-        - Question Asked: "{current_question}"
-        - Candidate Answer: "{transcript}"
-        
-        BEHAVIORAL TIMELINE:
-        {timeline_str}
-        
-        LAB DATA (Scientific Measurements):
-        - ACOUSTIC: {json.dumps(audio_summary)} 
-          (Note: Jitter > 1.5% = Nervousness; WPM > 170 = Rushing)
-        - VISUAL: {json.dumps(video_summary)} 
-          (Note: Eye Contact < 60% = Low Confidence; Dominant Emotion = {video_summary.get('dominant_emotion')})
+CURRENT: Question {current_q_index} of 5 (type: {current_q_type}).
+{"THIS IS THE LAST QUESTION — wrap up after evaluating." if is_last_question else f"NEXT question will be type: {next_q_type}."}
 
-        TASK:
-        Generate a JSON response with:
-        - Analyze the candidate's performance (Mental State + Content).
-        - Check if the answer is relevant to the question asked
-        - Check if the candidate doesn't contradict with his previous answers.
-        - "next_question": A follow-up question keeping in mind about you are at {current_question} question out of 5 questions to ask and you have to ask the question based on the candidates's answer as well as to check if the candidate posses all the skills and qualities for the role {target_role}
-        - if {current_question} == 5, then you end the interview and give a final thank you for attending the interview in the place of next question.
-        - "score": A score out of 10 for this specific answer.
-        
-        OUTPUT FORMAT: JSON Only.
-        {{
-            "feedback": "...",
-            "next_question": "...",
-            "score": 8
-        }}
-        """
+{history_text}
+
+QUESTION ASKED: "{current_question}"
+CANDIDATE ANSWER: "{transcript}"
+
+BEHAVIOURAL TIMELINE:
+{timeline_str if timeline_str else "(No timeline data available)"}
+
+ACOUSTIC DATA: {json.dumps(audio_summary)}
+  (Jitter > 1.5% = voice tremor/nervousness; WPM > 170 = rushing)
+VISUAL DATA: {json.dumps(video_summary)}
+  (Eye contact < 60% = low confidence; Dominant emotion = {video_summary.get('dominant_emotion', 'Neutral')})
+
+EVALUATION RULES:
+1. Score the answer honestly on technical accuracy, depth, and communication.
+2. Check if the answer is relevant to the question asked.
+3. Note any contradictions with previous answers.
+4. Be constructive — this is a practice platform, so frame feedback as coaching tips.
+
+NEXT QUESTION RULES:
+{"- Do NOT generate a next question. Instead write a brief, warm closing message." if is_last_question else f"- {next_q_instructions}"}
+- Keep questions concise (1-2 sentences max).
+- Do NOT reveal scoring or say 'great answer' — stay neutral and professional.
+
+Respond ONLY with valid JSON:
+{{
+  "feedback": "Detailed coaching feedback on this specific answer (2-4 sentences). Mention what was good and what to improve.",
+  "next_question": "{'Thank you for completing this practice session with PrepSpark. Review your report for detailed feedback and tips to improve!' if is_last_question else 'Your next question here'}",
+  "score": 7
+}}
+"""
 
         try:
             response = self.model.generate_content(
@@ -95,33 +107,45 @@ class LLMService:
             )
             return json.loads(response.text)
         except Exception as e:
-            print(f"❌ Gemini Error: {e}")
+            print(f"❌ AI Error: {e}")
             return {
-                "feedback": "System error analyzing response.",
-                "next_question": "Let's move on.",
+                "feedback": "Could not analyse this response due to a system error.",
+                "next_question": "Let's continue. Can you tell me about your experience with databases?",
                 "score": 0
             }
 
     def generate_final_report(self, interview_log):
         """
-        Generates the 'Executive Summary' after the interview is done.
-        'interview_log' is a list of all Q&A data.
+        Generates the executive performance report.
+        Returns structured JSON that the report page renders.
         """
         prompt = f"""
-        Generate a Detailed Technical Performance Report for this candidate.
-        
-        INTERVIEW DATA:
-        {json.dumps(interview_log)}
-        
-        REQUIREMENTS:
-        1. Executive Summary: The "Vibe" vs. The "Value".
-        2. Technical Depth: Analysis of keyword usage and concept clarity.
-        3. Behavioral Signals: Analysis of Jitter, Pitch, and Eye Contact.
-        4. Recommendation: Hire / No Hire / Training Needed.
-        
-        OUTPUT FORMAT: JSON.
-        """
-        
+You are an expert interview coach at PrepSpark, a candidate interview practice platform.
+Generate a detailed, encouraging but honest performance report for this practice session.
+
+INTERVIEW DATA:
+{json.dumps(interview_log, indent=2)}
+
+The interview had 5 questions: 1 introduction, 3 technical, 1 behavioural.
+
+Generate a JSON report with EXACTLY these keys:
+{{
+  "executive_summary": "2-3 sentences summarising overall performance, strengths, and key areas to work on. Write in plain English — no jargon, no bullet points here.",
+  "recommendation": "One of: 'Interview-Ready', 'Getting There — Keep Practising', 'More Practice Recommended'",
+  "technical_depth": "Analysis of how well the candidate answered technical questions. What concepts did they demonstrate? What was missing?",
+  "communication_style": "Analysis of how clearly and confidently the candidate communicated. Reference voice metrics (WPM, jitter) if available.",
+  "behavioural_signals": "Analysis of body language, eye contact, and emotional expression patterns observed across the session.",
+  "strengths": ["strength 1", "strength 2", "strength 3"],
+  "areas_for_improvement": ["area 1", "area 2", "area 3"],
+  "coaching_tips": "3-4 specific, actionable tips to help the candidate improve before their real interview."
+}}
+
+IMPORTANT:
+- All string values must be plain readable prose or arrays of short strings — NO nested objects inside string fields.
+- The "strengths" and "areas_for_improvement" fields must be JSON arrays of plain strings.
+- Be honest but encouraging — this is practice, not a real rejection.
+- Do not include any text outside the JSON object.
+"""
         try:
             response = self.model.generate_content(
                 prompt,
@@ -129,56 +153,5 @@ class LLMService:
             )
             return json.loads(response.text)
         except Exception as e:
-            return {"error": str(e)}
-
-
-# ... (rest of your file)
-
-if __name__ == "__main__":
-    print("🧠 Initializing LLM Service Test...")
-
-    # 1. Setup Mock Data (Simulating a "Game Tape")
-    mock_transcript = "I built a task management app using Java Spring Boot. It was challenging because I had to learn Hibernate, but I eventually solved the database connection issues."
-
-    mock_timeline = [
-        {
-            "timestamp": "0.0s - 3.5s",
-            "spoken": "I built a task management app",
-            "behavior": {"posture": "Nodding", "eye_contact": "Screen", "expression": "Happy"}
-        },
-        {
-            "timestamp": "3.6s - 6.0s",
-            "spoken": "It was challenging",
-            "behavior": {"posture": "Static", "eye_contact": "Down", "expression": "Neutral"}
-        },
-        {
-            "timestamp": "6.1s - 9.0s",
-            "spoken": "solved the database connection",
-            "behavior": {"posture": "Nodding", "eye_contact": "Screen", "expression": "Happy"}
-        }
-    ]
-
-    mock_audio_stats = {"jitter_percent": 0.5, "wpm": 130}
-    mock_video_stats = {"gaze_screen_pct": 85, "expressiveness": 50, "dominant_emotion": "Happy"}
-
-    # 2. Run the Service
-    try:
-        service = LLMService()
-
-        print("\n--- 🧪 Sending Prompt to Gemini... ---")
-        result = service.analyze_response(
-            transcript=mock_transcript,
-            timeline=mock_timeline,
-            audio_summary=mock_audio_stats,
-            video_summary=mock_video_stats,
-            current_question="Tell me about a project you are proud of.",
-            chat_history=[],
-            target_role="Junior Java Developer"
-        )
-
-        print("\n✅ GEMINI RESPONSE:")
-        print(json.dumps(result, indent=2))
-
-    except Exception as e:
-        print(f"\n❌ TEST FAILED: {e}")
-        print("Check your GEMINI_API_KEY in .env file!")
+            print(f"❌ Report generation error: {e}")
+            return {"error": str(e), "executive_summary": "Report generation encountered an error."}
