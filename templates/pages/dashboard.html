@@ -1,0 +1,63 @@
+<!-- DASHBOARD PAGE -->
+<div id="dashboard-page" class="page">
+  <div class="top-nav">
+    <div class="logo-mark" style="font-size:20px;">
+      <div class="logo-dot"></div> PrepSpark
+    </div>
+    <div class="nav-user">
+      <span id="dash-username" style="font-family:'DM Mono',monospace;font-size:13px;color:var(--text-muted)"></span>
+      <button class="btn-nav" onclick="handleLogout()">Log out</button>
+    </div>
+  </div>
+  <div class="dashboard-body">
+    <div class="dash-header">
+      <div class="dash-greeting">Hello, <span id="dash-name">Candidate</span>.</div>
+      <div class="dash-sub">Ready to practise? Start a new session, resume an incomplete one, or review a past report.</div>
+    </div>
+
+    <!-- In-Progress Sessions -->
+    <div id="dash-inprogress-section" style="display:none; margin-bottom:40px;">
+      <div class="dash-section-label">
+        <span class="dash-section-dot" style="background:var(--warn)"></span>
+        Resume Incomplete Sessions
+      </div>
+      <div class="dash-grid" id="dash-inprogress-grid"></div>
+    </div>
+
+    <!-- Completed Sessions -->
+    <div id="dash-completed-section">
+      <div class="dash-section-label">
+        <span class="dash-section-dot" style="background:var(--accent-2)"></span>
+        Completed Sessions
+      </div>
+      <div class="dash-grid" id="dash-grid"></div>
+    </div>
+  </div>
+</div>
+
+<!-- SETUP PAGE -->
+<div id="setup-page" class="page">
+  <div class="setup-card">
+    <div class="setup-logo logo-mark">
+      <div class="logo-dot"></div> PrepSpark
+    </div>
+    <h2 class="setup-title">Let's get you ready.</h2>
+    <p class="setup-sub">Tell us the role you're preparing for. The AI will tailor its questions to match real interview expectations.</p>
+
+    <div id="setup-error" class="error-msg"></div>
+
+    <div class="form-group">
+      <label class="form-label">Your Full Name</label>
+      <input type="text" id="setup-name" class="form-input" placeholder="John Doe">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Role You're Practising For</label>
+      <input type="text" id="setup-role" class="form-input" placeholder="e.g. Junior Java Developer, Data Analyst…">
+    </div>
+
+    <div class="setup-actions">
+      <button class="btn-secondary" onclick="showPage('dashboard-page')">← Back</button>
+      <button class="btn-primary" onclick="startInterview()">Begin Session →</button>
+    </div>
+  </div>
+</div>

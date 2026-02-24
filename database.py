@@ -54,8 +54,8 @@ def init_db():
         FOREIGN KEY(session_id) REFERENCES interviews(session_id)
     )''')
 
-    # ── Report cache table (NEW) ──
-    # Stores the Gemini final report so it is never regenerated twice.
+    # Stores the final AI-generated report as JSON.
+    # Written once when the interview is completed. Never regenerated.
     c.execute('''CREATE TABLE IF NOT EXISTS reports (
         session_id TEXT PRIMARY KEY,
         report_json TEXT NOT NULL,
@@ -64,8 +64,6 @@ def init_db():
     )''')
 
     conn.commit()
-
-    # ── Migrate existing DBs that lack new columns ──
     _run_migrations(c)
     conn.commit()
     conn.close()
@@ -73,15 +71,13 @@ def init_db():
 
 
 def _run_migrations(c):
-    """Safely adds columns/tables that may not exist in older DBs."""
-    # user_id on interviews
+    """Non-destructively adds columns that may be missing in older DBs."""
     c.execute("PRAGMA table_info(interviews)")
     cols = [r[1] for r in c.fetchall()]
     if "user_id" not in cols:
         c.execute("ALTER TABLE interviews ADD COLUMN user_id INTEGER")
         print("  ↳ Migrated: interviews.user_id")
 
-    # question_type on responses
     c.execute("PRAGMA table_info(responses)")
     cols = [r[1] for r in c.fetchall()]
     if "question_type" not in cols:
@@ -99,22 +95,19 @@ def _hash_password(password: str, salt: str) -> str:
 
 def register_user(username, email, password, full_name=""):
     salt = secrets.token_hex(32)
-    password_hash = _hash_password(password, salt)
+    pw_hash = _hash_password(password, salt)
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     try:
         c.execute(
             "INSERT INTO users (username, email, password_hash, salt, full_name) VALUES (?, ?, ?, ?, ?)",
-            (username.lower().strip(), email.lower().strip(), password_hash, salt, full_name)
+            (username.lower().strip(), email.lower().strip(), pw_hash, salt, full_name)
         )
-        user_id = c.lastrowid
         conn.commit()
-        return True, user_id
+        return True, c.lastrowid
     except sqlite3.IntegrityError as e:
-        if "username" in str(e):
-            return False, "Username already taken."
-        if "email" in str(e):
-            return False, "An account with this email already exists."
+        if "username" in str(e): return False, "Username already taken."
+        if "email" in str(e): return False, "An account with this email already exists."
         return False, "Registration failed."
     finally:
         conn.close()
@@ -124,15 +117,10 @@ def login_user(username_or_email, password):
     conn = sqlite3.connect(DB_NAME)
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
-    c.execute(
-        "SELECT * FROM users WHERE username = ? OR email = ?",
-        (username_or_email.lower().strip(), username_or_email.lower().strip())
-    )
+    identifier = username_or_email.lower().strip()
+    c.execute("SELECT * FROM users WHERE username = ? OR email = ?", (identifier, identifier))
     user = c.fetchone()
-    if not user:
-        conn.close()
-        return False, "Invalid username or password."
-    if _hash_password(password, user["salt"]) != user["password_hash"]:
+    if not user or _hash_password(password, user["salt"]) != user["password_hash"]:
         conn.close()
         return False, "Invalid username or password."
 
@@ -161,9 +149,7 @@ def validate_token(token):
     c.execute("SELECT user_id, expires_at FROM auth_sessions WHERE token = ?", (token,))
     row = c.fetchone()
     conn.close()
-    if not row:
-        return None
-    if datetime.fromisoformat(row["expires_at"]) < datetime.now():
+    if not row or datetime.fromisoformat(row["expires_at"]) < datetime.now():
         return None
     return row["user_id"]
 
@@ -183,8 +169,19 @@ def create_session(session_id, name, role, user_id=None):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     c.execute(
-        "INSERT INTO interviews (session_id, user_id, candidate_name, target_role, start_time) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO interviews (session_id, user_id, candidate_name, target_role, start_time, status) VALUES (?, ?, ?, ?, ?, 'IN_PROGRESS')",
         (session_id, user_id, name, role, datetime.now().isoformat())
+    )
+    conn.commit()
+    conn.close()
+
+
+def mark_session_completed(session_id: str):
+    """Sets interview status to COMPLETED. Called after the final report is saved."""
+    conn = sqlite3.connect(DB_NAME)
+    conn.execute(
+        "UPDATE interviews SET status = 'COMPLETED' WHERE session_id = ?",
+        (session_id,)
     )
     conn.commit()
     conn.close()
@@ -213,15 +210,28 @@ def get_chat_history(session_id):
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
     c.execute(
-        "SELECT question_text as q_text, transcript, ai_score FROM responses WHERE session_id = ? ORDER BY question_index ASC",
+        "SELECT question_text as q_text, transcript, ai_score FROM responses "
+        "WHERE session_id = ? ORDER BY question_index ASC",
         (session_id,)
     )
     rows = c.fetchall()
     conn.close()
-    return [{"q_text": row["q_text"], "transcript": row["transcript"], "score": row["ai_score"]} for row in rows]
+    return [{"q_text": r["q_text"], "transcript": r["transcript"], "score": r["ai_score"]} for r in rows]
 
 
-def get_full_report_data(session_id):
+def get_session_info(session_id):
+    """Returns the interview row only (no responses)."""
+    conn = sqlite3.connect(DB_NAME)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute("SELECT * FROM interviews WHERE session_id = ?", (session_id,))
+    row = c.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_full_session_data(session_id):
+    """Returns (session_dict, [response_dicts]) ordered by question_index."""
     conn = sqlite3.connect(DB_NAME)
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
@@ -231,18 +241,22 @@ def get_full_report_data(session_id):
         conn.close()
         return None, []
     session = dict(session_row)
-    c.execute("SELECT * FROM responses WHERE session_id = ? ORDER BY question_index ASC", (session_id,))
-    responses = [dict(row) for row in c.fetchall()]
+    c.execute(
+        "SELECT * FROM responses WHERE session_id = ? ORDER BY question_index ASC",
+        (session_id,)
+    )
+    responses = [dict(r) for r in c.fetchall()]
     conn.close()
     return session, responses
 
 
 # ─────────────────────────────────────────────
-# REPORT CACHE (NEW)
+# REPORT STORAGE
+# Written once on completion. Loaded on every subsequent view.
 # ─────────────────────────────────────────────
 
 def save_report(session_id: str, report_data: dict):
-    """Persists the generated Gemini report so it is never regenerated."""
+    """Stores the generated report permanently in the database."""
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     c.execute(
@@ -253,20 +267,23 @@ def save_report(session_id: str, report_data: dict):
     conn.close()
 
 
-def get_cached_report(session_id: str):
-    """Returns the cached report dict, or None if not yet generated."""
+def get_stored_report(session_id: str):
+    """
+    Retrieves the stored report from the database.
+    Returns None if the interview is not yet completed.
+    """
     conn = sqlite3.connect(DB_NAME)
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
     c.execute("SELECT report_json FROM reports WHERE session_id = ?", (session_id,))
     row = c.fetchone()
     conn.close()
-    if row:
-        try:
-            return json.loads(row["report_json"])
-        except Exception:
-            return None
-    return None
+    if not row:
+        return None
+    try:
+        return json.loads(row["report_json"])
+    except Exception:
+        return None
 
 
 # ─────────────────────────────────────────────
@@ -275,17 +292,22 @@ def get_cached_report(session_id: str):
 
 def get_user_interviews(user_id):
     """
-    Returns only interviews with at least one submitted response.
-    Also includes avg_score so the dashboard can display it.
+    Returns all sessions that have at least one response,
+    separated by status (COMPLETED / IN_PROGRESS).
+    Includes avg_score and response_count for display.
     """
     conn = sqlite3.connect(DB_NAME)
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
     c.execute(
         """
-        SELECT i.session_id, i.candidate_name, i.target_role, i.start_time, i.status,
-               COUNT(r.id) as response_count,
-               ROUND(AVG(r.ai_score), 1) as avg_score
+        SELECT  i.session_id,
+                i.candidate_name,
+                i.target_role,
+                i.start_time,
+                i.status,
+                COUNT(r.id)              AS response_count,
+                ROUND(AVG(r.ai_score),1) AS avg_score
         FROM interviews i
         LEFT JOIN responses r ON i.session_id = r.session_id
         WHERE i.user_id = ?

@@ -114,6 +114,49 @@ Respond ONLY with valid JSON:
                 "score": 0
             }
 
+    def generate_resume_question(self, target_role: str, q_index: int, q_type: str, chat_history: list) -> dict:
+        """
+        Generates the next question when a candidate resumes an interrupted session.
+        Uses the prior conversation history so the question flows naturally.
+        """
+        history_text = ""
+        if chat_history:
+            history_text = "PREVIOUS Q&A:\n"
+            for item in chat_history:
+                history_text += f"- Q: {item.get('q_text', '')}\n  A: {item.get('transcript', '')[:200]}…\n"
+
+        type_instructions = {
+            'intro': "Ask a warm welcome-back introduction or background question.",
+            'technical': f"Ask a specific technical question for a {target_role} role. Focus on skills, tools, algorithms, or system design. Be concrete.",
+            'behavioural': "Ask a STAR-format behavioural question (Situation, Task, Action, Result). E.g. 'Tell me about a time you handled a tough deadline.'"
+        }.get(q_type, "Ask a relevant technical question.")
+
+        prompt = f"""
+You are an AI interview coach at PrepSpark. A candidate is resuming their practice session for a {target_role} role at question {q_index} of 5.
+
+{history_text}
+
+Generate question {q_index} of 5 (type: {q_type}).
+{type_instructions}
+
+Rules:
+- Keep it to 1-2 sentences.
+- Make it naturally flow from previous answers if there are any.
+- Do NOT greet or say 'welcome back' — the UI handles that.
+
+Respond ONLY with JSON:
+{{"question": "Your question here"}}
+"""
+        try:
+            response = self.model.generate_content(
+                prompt,
+                generation_config={"response_mime_type": "application/json"}
+            )
+            return json.loads(response.text)
+        except Exception as e:
+            print(f"❌ Resume question generation failed: {e}")
+            return {"question": f"Question {q_index}: Can you describe a challenging problem you solved in a past project?"}
+
     def generate_final_report(self, interview_log):
         """
         Generates the executive performance report.

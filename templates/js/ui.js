@@ -4,45 +4,56 @@
 
 function showPage(id) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  document.getElementById(id).classList.add('active');
+  const target = document.getElementById(id);
+  if (target) target.classList.add('active');
 }
 
 function toast(msg, type = 'success') {
   const container = document.getElementById('toast-container');
+  if (!container) return;
   const t = document.createElement('div');
   t.className = `toast ${type}`;
   t.innerHTML = `<span>${type === 'success' ? '✓' : '✕'}</span> ${msg}`;
   container.appendChild(t);
+  setTimeout(() => t.classList.add('toast-out'), 3600);
   setTimeout(() => t.remove(), 4000);
 }
 
 function showError(el, msg) {
+  if (!el) return;
   el.textContent = msg;
   el.style.display = 'block';
 }
 
 function hideError(el) {
+  if (!el) return;
   el.style.display = 'none';
 }
 
-// Processing overlay steps
+// ─── Processing Overlay ───
 const PROC_STEPS = ['step-video', 'step-audio', 'step-timeline', 'step-ai'];
 let stepTimer = null;
 
 function showProcessing() {
-  document.getElementById('processing-overlay').classList.add('active');
+  const overlay = document.getElementById('processing-overlay');
+  if (overlay) overlay.classList.add('active');
   PROC_STEPS.forEach(id => {
     const el = document.getElementById(id);
-    el.classList.remove('done', 'active');
+    if (el) el.classList.remove('done', 'active');
   });
-  document.getElementById('step-video').classList.add('active');
+  const first = document.getElementById(PROC_STEPS[0]);
+  if (first) first.classList.add('active');
+
   let i = 0;
+  clearInterval(stepTimer);
   stepTimer = setInterval(() => {
     if (i < PROC_STEPS.length) {
-      if (i > 0) document.getElementById(PROC_STEPS[i - 1]).classList.replace('active', 'done');
-      if (document.getElementById(PROC_STEPS[i])) {
-        document.getElementById(PROC_STEPS[i]).classList.add('active');
+      if (i > 0) {
+        const prev = document.getElementById(PROC_STEPS[i - 1]);
+        if (prev) { prev.classList.remove('active'); prev.classList.add('done'); }
       }
+      const cur = document.getElementById(PROC_STEPS[i]);
+      if (cur) cur.classList.add('active');
       i++;
     }
   }, 4500);
@@ -52,15 +63,10 @@ function hideProcessing() {
   clearInterval(stepTimer);
   PROC_STEPS.forEach(id => {
     const el = document.getElementById(id);
-    if (el) el.classList.add('done');
+    if (el) { el.classList.remove('active'); el.classList.add('done'); }
   });
-  setTimeout(() => document.getElementById('processing-overlay').classList.remove('active'), 400);
-}
-
-function switchSidebar(tab) {
-  document.querySelectorAll('.sidebar-tab').forEach((b, i) => {
-    b.classList.toggle('active', (i === 0) === (tab === 'status'));
-  });
-  document.getElementById('panel-status').classList.toggle('active', tab === 'status');
-  document.getElementById('panel-transcript').classList.toggle('active', tab === 'transcript');
+  setTimeout(() => {
+    const overlay = document.getElementById('processing-overlay');
+    if (overlay) overlay.classList.remove('active');
+  }, 400);
 }

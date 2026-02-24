@@ -1,18 +1,16 @@
 /* ═══════════════════════════════════════════════════
-   PrepSpark — App State & Configuration
+   PrepSpark — Shared State & Config
    ═══════════════════════════════════════════════════ */
 
 const API = 'http://localhost:5000';
 
-const APP_NAME = 'PrepSpark';
-
 const state = {
-  token: localStorage.getItem('psToken') || null,
-  user: JSON.parse(localStorage.getItem('psUser') || 'null'),
+  token: localStorage.getItem('ps_token') || null,
+  user: JSON.parse(localStorage.getItem('ps_user') || 'null'),
   sessionId: null,
   currentQIndex: 1,
   currentQText: '',
-  currentQType: 'intro',   // 'intro' | 'technical' | 'behavioural'
+  currentQType: 'intro',
   totalQ: 5,
   mediaStream: null,
   mediaRecorder: null,
@@ -28,13 +26,13 @@ function authHeaders() {
 }
 
 function saveSession() {
-  localStorage.setItem('psToken', state.token);
-  localStorage.setItem('psUser', JSON.stringify(state.user));
+  localStorage.setItem('ps_token', state.token);
+  localStorage.setItem('ps_user', JSON.stringify(state.user));
 }
 
 function clearSession() {
   state.token = null;
   state.user = null;
-  localStorage.removeItem('psToken');
-  localStorage.removeItem('psUser');
+  localStorage.removeItem('ps_token');
+  localStorage.removeItem('ps_user');
 }

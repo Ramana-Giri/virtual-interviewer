@@ -2,9 +2,6 @@
    PrepSpark — Interview Room Module
    ═══════════════════════════════════════════════════ */
 
-/* Question type map: based on index what type each question is.
-   Index 1 = Intro, 2-4 = Technical, 5 = Behavioural.
-   The LLM decides the actual question content, but we label them here. */
 const Q_TYPES = {
   1: 'intro',
   2: 'technical',
@@ -19,12 +16,12 @@ const Q_TYPE_LABELS = {
   behavioural: 'Behavioural'
 };
 
-// ─── Start Interview ───
+// ─── Start New Interview ───
 async function startInterview() {
-  const name = document.getElementById('setup-name').value.trim();
-  const role = document.getElementById('setup-role').value.trim();
+  const name = document.getElementById('setup-name')?.value.trim();
+  const role = document.getElementById('setup-role')?.value.trim();
   const errEl = document.getElementById('setup-error');
-  errEl.style.display = 'none';
+  if (errEl) errEl.style.display = 'none';
 
   if (!name || !role) {
     showError(errEl, 'Please enter your name and the target role.');
@@ -43,7 +40,7 @@ async function startInterview() {
     state.sessionId = data.session_id;
     state.currentQIndex = 1;
     state.currentQText = data.question;
-    state.currentQType = Q_TYPES[1];
+    state.currentQType = 'intro';
     state.totalQ = 5;
 
     await initCamera();
@@ -57,40 +54,49 @@ async function startInterview() {
     }
   } catch (e) {
     showError(errEl, 'Failed to start session. Is the server running?');
+    console.error(e);
   }
 }
 
+// ─── Setup UI ───
 function setupInterviewUI(data) {
-  const qType = Q_TYPES[data.question_index] || 'technical';
-  document.getElementById('session-badge').textContent = '#' + data.session_id;
-  document.getElementById('nav-role').textContent = document.getElementById('setup-role').value;
+  const qType = Q_TYPES[data.question_index] || data.question_type || 'technical';
+
+  // Topbar
+  const sessionBadge = document.getElementById('session-badge');
+  const navRole = document.getElementById('nav-role');
+  const setupRole = document.getElementById('setup-role');
+  if (sessionBadge) sessionBadge.textContent = '#' + data.session_id;
+  if (navRole && setupRole) navRole.textContent = setupRole.value;
+
   updateQuestionCard(data.question_index, data.question, qType);
-  document.getElementById('stat-q').textContent = `${data.question_index} / ${data.total_questions}`;
-  document.getElementById('stat-status').textContent = 'Listening';
   buildQPips(data.question_index);
+
   // Reset transcript log
-  document.getElementById('transcript-log').innerHTML = `
-    <div style="color:var(--text-dim);font-family:'DM Mono',monospace;font-size:12px;text-align:center;padding:40px 0;">
-      Transcript will appear here after each answer.
-    </div>
-  `;
+  const log = document.getElementById('transcript-log');
+  if (log) log.innerHTML = '<div class="iv-transcript-empty">Your answers will appear here after submission.</div>';
+
+  setInterviewerStatus('Ready to ask', false);
 }
 
 function updateQuestionCard(index, text, type) {
-  const label = document.getElementById('q-label-text');
-  const tag = document.getElementById('q-type-tag');
-  const qText = document.getElementById('q-text');
+  const labelEl = document.getElementById('q-label-text');
+  const typeTag = document.getElementById('q-type-tag');
+  const textEl = document.getElementById('q-text');
+  const progressLabel = document.getElementById('iv-progress-label');
 
-  if (label) label.textContent = `Question ${index} of 5`;
-  if (tag) {
-    tag.textContent = Q_TYPE_LABELS[type] || type;
-    tag.className = `q-type-tag ${type}`;
+  if (labelEl) labelEl.textContent = `Question ${index} of 5`;
+  if (progressLabel) progressLabel.textContent = `Question ${index} of 5`;
+  if (typeTag) {
+    typeTag.textContent = Q_TYPE_LABELS[type] || type;
+    typeTag.className = `iv-q-type-badge ${type}`;
   }
-  if (qText) qText.textContent = text;
+  if (textEl) textEl.textContent = text;
 }
 
 function buildQPips(current) {
   const container = document.getElementById('q-pips');
+  if (!container) return;
   container.innerHTML = '';
   for (let i = 1; i <= 5; i++) {
     const pip = document.createElement('div');
@@ -100,17 +106,37 @@ function buildQPips(current) {
   }
 }
 
+function setInterviewerStatus(msg, isSpeaking) {
+  const statusEl = document.getElementById('iv-interviewer-status');
+  const ring = document.getElementById('iv-avatar-ring');
+  const wave = document.getElementById('speaking-anim');
+  const qCard = document.getElementById('question-card');
+
+  if (statusEl) {
+    statusEl.textContent = msg;
+    statusEl.className = 'iv-interviewer-status' + (isSpeaking ? ' speaking' : '');
+  }
+  if (ring) ring.className = 'iv-avatar-ring' + (isSpeaking ? ' speaking' : '');
+  if (wave) wave.className = 'iv-avatar-wave' + (isSpeaking ? ' active' : '');
+  if (qCard) qCard.className = 'iv-question-card' + (isSpeaking ? ' speaking' : '');
+}
+
 // ─── Camera ───
 async function initCamera() {
+  const noCamera = document.getElementById('iv-no-camera');
   try {
     state.mediaStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-    document.getElementById('candidate-video').srcObject = state.mediaStream;
-    document.getElementById('sen-camera').textContent = 'Active';
-    document.getElementById('sen-camera').className = 'sensor-badge badge-ok';
-    document.getElementById('sen-mic').textContent = 'Active';
-    document.getElementById('sen-mic').className = 'sensor-badge badge-ok';
+    const video = document.getElementById('candidate-video');
+    if (video) video.srcObject = state.mediaStream;
+    if (noCamera) noCamera.classList.add('hidden');
+
+    const senCamera = document.getElementById('sen-camera');
+    const senMic = document.getElementById('sen-mic');
+    if (senCamera) { senCamera.textContent = 'Active'; senCamera.className = 'sensor-badge badge-ok'; }
+    if (senMic) { senMic.textContent = 'Active'; senMic.className = 'sensor-badge badge-ok'; }
   } catch (e) {
-    toast('Camera/microphone access denied. Please allow permissions and refresh.', 'error');
+    if (noCamera) noCamera.classList.remove('hidden');
+    toast('Camera/microphone access denied. Please allow permissions.', 'error');
   }
 }
 
@@ -126,17 +152,16 @@ async function playAudio(base64mp3) {
       const audio = new Audio(url);
 
       state.isSpeaking = true;
-      document.getElementById('speaking-anim').classList.add('active');
-      document.getElementById('question-card').classList.add('speaking');
-      document.getElementById('stat-status').textContent = 'Interviewer speaking…';
-      document.getElementById('btn-record').disabled = true;
-      document.getElementById('sidebar-hint').innerHTML =
-        'The interviewer is speaking. The record button will enable once they finish.';
+      setInterviewerStatus('Speaking…', true);
+
+      const recordBtn = document.getElementById('btn-record');
+      if (recordBtn) recordBtn.disabled = true;
+
+      const hintEl = document.getElementById('sidebar-hint');
+      if (hintEl) hintEl.textContent = 'The AI interviewer is speaking. Recording will enable when they finish.';
 
       audio.onended = () => {
         state.isSpeaking = false;
-        document.getElementById('speaking-anim').classList.remove('active');
-        document.getElementById('question-card').classList.remove('speaking');
         URL.revokeObjectURL(url);
         enableRecording();
         resolve();
@@ -151,11 +176,11 @@ async function playAudio(base64mp3) {
 }
 
 function enableRecording() {
-  document.getElementById('stat-status').textContent = 'Ready to record';
-  document.getElementById('btn-record').disabled = false;
-  document.getElementById('sidebar-hint').innerHTML =
-    'Press <strong style="color:var(--text)">Start Recording</strong> to answer. '
-    + 'When done, click <strong style="color:var(--text)">Submit Answer</strong>.';
+  setInterviewerStatus('Waiting for your answer…', false);
+  const recordBtn = document.getElementById('btn-record');
+  if (recordBtn) recordBtn.disabled = false;
+  const hintEl = document.getElementById('sidebar-hint');
+  if (hintEl) hintEl.innerHTML = 'Press <strong>Start Recording</strong> to answer. When done, click <strong>Submit Answer</strong>.';
 }
 
 // ─── Recording ───
@@ -168,29 +193,40 @@ function startRecord() {
   if (!state.mediaStream) { toast('Camera not ready. Please refresh.', 'error'); return; }
 
   state.recordedChunks = [];
-  let options;
-  try { options = { mimeType: 'video/webm;codecs=vp9,opus' }; new MediaRecorder(state.mediaStream, options); }
-  catch (e) { options = {}; }
+  let options = {};
+  try {
+    options = { mimeType: 'video/webm;codecs=vp9,opus' };
+    new MediaRecorder(state.mediaStream, options);
+  } catch (e) { options = {}; }
 
   state.mediaRecorder = new MediaRecorder(state.mediaStream, options);
-  state.mediaRecorder.ondataavailable = e => { if (e.data.size > 0) state.recordedChunks.push(e.data); };
+  state.mediaRecorder.ondataavailable = e => {
+    if (e.data.size > 0) state.recordedChunks.push(e.data);
+  };
   state.mediaRecorder.start(100);
   state.isRecording = true;
 
   const btn = document.getElementById('btn-record');
-  btn.classList.add('recording');
-  document.getElementById('btn-record-label').textContent = 'Stop Recording';
-  document.getElementById('rec-indicator').classList.add('active');
-  document.getElementById('timer-badge').classList.add('active');
-  document.getElementById('stat-status').textContent = 'Recording…';
-  document.getElementById('btn-submit').classList.remove('visible');
+  const labelEl = document.getElementById('btn-record-label');
+  const recBadge = document.getElementById('rec-indicator');
+  const timerEl = document.getElementById('timer-badge');
+  const liveIndicator = document.getElementById('iv-live-indicator');
+  const submitBtn = document.getElementById('btn-submit');
+
+  if (btn) btn.classList.add('recording');
+  if (labelEl) labelEl.textContent = 'Stop Recording';
+  if (recBadge) recBadge.classList.add('active');
+  if (liveIndicator) liveIndicator.classList.add('active');
+  if (submitBtn) submitBtn.classList.remove('visible');
+
+  setInterviewerStatus('Listening to your answer…', false);
 
   state.recSeconds = 0;
   state.recordTimer = setInterval(() => {
     state.recSeconds++;
     const m = Math.floor(state.recSeconds / 60);
     const s = state.recSeconds % 60;
-    document.getElementById('timer-badge').textContent = `${m}:${s.toString().padStart(2, '0')}`;
+    if (timerEl) timerEl.textContent = `${m}:${s.toString().padStart(2, '0')}`;
   }, 1000);
 }
 
@@ -201,11 +237,21 @@ function stopRecord() {
   clearInterval(state.recordTimer);
 
   const btn = document.getElementById('btn-record');
-  btn.classList.remove('recording');
-  document.getElementById('btn-record-label').textContent = 'Re-record';
-  document.getElementById('rec-indicator').classList.remove('active');
-  document.getElementById('stat-status').textContent = 'Ready to submit';
-  document.getElementById('btn-submit').classList.add('visible');
+  const labelEl = document.getElementById('btn-record-label');
+  const recBadge = document.getElementById('rec-indicator');
+  const liveIndicator = document.getElementById('iv-live-indicator');
+  const submitBtn = document.getElementById('btn-submit');
+
+  if (btn) btn.classList.remove('recording');
+  if (labelEl) labelEl.textContent = 'Re-record';
+  if (recBadge) recBadge.classList.remove('active');
+  if (liveIndicator) liveIndicator.classList.remove('active');
+  if (submitBtn) submitBtn.classList.add('visible');
+
+  setInterviewerStatus('Review your answer, then submit.', false);
+
+  const hintEl = document.getElementById('sidebar-hint');
+  if (hintEl) hintEl.innerHTML = 'Happy with your answer? Click <strong>Submit Answer</strong>. Or press <strong>Re-record</strong> to try again.';
 }
 
 // ─── Submit Response ───
@@ -236,14 +282,17 @@ async function submitResponse() {
 
     if (!res.ok) { toast(data.error || 'Submission failed.', 'error'); return; }
 
-    // Add to sidebar transcript
     addToTranscript(state.currentQIndex, state.currentQText, state.currentQType, data.transcript || '');
 
     if (data.status === 'completed') {
-      toast('Session complete! Generating your report…', 'success');
-      setTimeout(() => loadReport(state.sessionId), 1500);
+      toast('Session complete! Loading your report…', 'success');
+      // Stop camera stream
+      if (state.mediaStream) {
+        state.mediaStream.getTracks().forEach(t => t.stop());
+        state.mediaStream = null;
+      }
+      setTimeout(() => loadReport(state.sessionId), 1200);
     } else {
-      // Advance to next question
       const nextIndex = data.next_index;
       const nextType = Q_TYPES[nextIndex] || 'technical';
 
@@ -253,13 +302,17 @@ async function submitResponse() {
       state.recordedChunks = [];
 
       updateQuestionCard(nextIndex, data.next_question, nextType);
-      document.getElementById('stat-q').textContent = `${nextIndex} / 5`;
-      document.getElementById('btn-submit').classList.remove('visible');
-      document.getElementById('btn-record').disabled = true;
-      document.getElementById('btn-record-label').textContent = 'Start Recording';
-      document.getElementById('timer-badge').classList.remove('active');
-      document.getElementById('timer-badge').textContent = '0:00';
       buildQPips(nextIndex);
+
+      const submitBtn = document.getElementById('btn-submit');
+      const recordBtn = document.getElementById('btn-record');
+      const labelEl = document.getElementById('btn-record-label');
+      const timerEl = document.getElementById('timer-badge');
+
+      if (submitBtn) submitBtn.classList.remove('visible');
+      if (recordBtn) recordBtn.disabled = true;
+      if (labelEl) labelEl.textContent = 'Start Recording';
+      if (timerEl) timerEl.textContent = '0:00';
 
       if (data.audio_b64) {
         await playAudio(data.audio_b64);
@@ -277,23 +330,25 @@ async function submitResponse() {
 // ─── Transcript Log ───
 function addToTranscript(qIndex, question, qType, transcript) {
   const log = document.getElementById('transcript-log');
-  // Remove placeholder
-  const placeholder = log.querySelector('[style*="text-align:center"]');
-  if (placeholder) placeholder.remove();
+  if (!log) return;
 
-  const typeLabel = Q_TYPE_LABELS[qType] || qType;
+  const emptyEl = log.querySelector('.iv-transcript-empty');
+  if (emptyEl) emptyEl.remove();
+
   const typeColors = { intro: 'var(--accent-2)', technical: 'var(--accent)', behavioural: 'var(--warn)' };
   const color = typeColors[qType] || 'var(--accent)';
+  const typeLabel = Q_TYPE_LABELS[qType] || qType;
 
   const item = document.createElement('div');
-  item.style.cssText = 'margin-bottom:20px;padding-bottom:20px;border-bottom:1px solid var(--border)';
+  item.className = 'iv-transcript-item';
   item.innerHTML = `
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-      <span style="font-size:11px;font-family:'DM Mono',monospace;color:${color};text-transform:uppercase;letter-spacing:0.1em;">Q${qIndex}</span>
-      <span style="font-size:10px;font-family:'DM Mono',monospace;color:${color};background:rgba(255,255,255,0.05);padding:1px 7px;border-radius:100px;">${typeLabel}</span>
+    <div class="iv-transcript-item-meta">
+      <span class="iv-transcript-item-q" style="color:${color}">Q${qIndex}</span>
+      <span style="font-size:10px;font-family:'DM Mono',monospace;color:${color};background:rgba(255,255,255,0.04);padding:1px 7px;border-radius:100px;border:1px solid rgba(255,255,255,0.06);">${typeLabel}</span>
     </div>
-    <div style="font-size:13px;color:var(--text);margin-bottom:6px;font-weight:500;line-height:1.4;">${question}</div>
-    <div style="font-size:12px;color:var(--text-muted);font-style:italic;line-height:1.6;">${transcript || '(No transcription)'}</div>
+    <div class="iv-transcript-item-text">${transcript || '(No transcription recorded)'}</div>
   `;
   log.appendChild(item);
+  // Scroll to bottom
+  log.scrollTop = log.scrollHeight;
 }

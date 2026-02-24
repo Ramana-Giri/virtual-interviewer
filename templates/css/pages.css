@@ -195,6 +195,45 @@
 .new-interview-icon { font-size: 28px; color: var(--accent); }
 .new-interview-label { font-size: 14px; color: var(--text-muted); }
 
+/* Resume card — in-progress sessions */
+.dash-card.resumable {
+  border-color: rgba(245,166,35,0.25);
+  background: rgba(245,166,35,0.03);
+}
+.dash-card.resumable:hover { border-color: rgba(245,166,35,0.5); }
+.dash-card-resume-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 14px;
+  padding: 7px 14px;
+  background: rgba(245,166,35,0.12);
+  border: 1px solid rgba(245,166,35,0.3);
+  border-radius: 8px;
+  color: var(--warn);
+  font-size: 12px;
+  font-family: 'DM Mono', monospace;
+  font-weight: 500;
+}
+
+/* Dashboard section headers */
+.dash-section-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-muted);
+  margin-bottom: 16px;
+}
+.dash-section-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
 /* Shared nav for report + dashboard */
 .top-nav {
   display: flex;

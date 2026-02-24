@@ -6,13 +6,13 @@ function switchAuthTab(tab) {
   document.querySelectorAll('.tab-btn').forEach((b, i) => {
     b.classList.toggle('active', (i === 0) === (tab === 'login'));
   });
-  document.getElementById('login-form').classList.toggle('hidden', tab !== 'login');
-  document.getElementById('register-form').classList.toggle('hidden', tab !== 'register');
+  document.getElementById('login-form')?.classList.toggle('hidden', tab !== 'login');
+  document.getElementById('register-form')?.classList.toggle('hidden', tab !== 'register');
 }
 
 async function handleLogin() {
-  const identifier = document.getElementById('login-identifier').value.trim();
-  const password = document.getElementById('login-password').value;
+  const identifier = document.getElementById('login-identifier')?.value.trim();
+  const password = document.getElementById('login-password')?.value;
   const errEl = document.getElementById('login-error');
   hideError(errEl);
 
@@ -32,7 +32,7 @@ async function handleLogin() {
     saveSession();
 
     toast('Welcome back, ' + (data.user.full_name || data.user.username) + '!', 'success');
-    loadDashboard();
+    await loadDashboard();
     showPage('dashboard-page');
   } catch (e) {
     showError(errEl, 'Connection failed. Is the server running?');
@@ -40,10 +40,10 @@ async function handleLogin() {
 }
 
 async function handleRegister() {
-  const fullName = document.getElementById('reg-fullname').value.trim();
-  const username = document.getElementById('reg-username').value.trim();
-  const email = document.getElementById('reg-email').value.trim();
-  const password = document.getElementById('reg-password').value;
+  const fullName = document.getElementById('reg-fullname')?.value.trim();
+  const username = document.getElementById('reg-username')?.value.trim();
+  const email = document.getElementById('reg-email')?.value.trim();
+  const password = document.getElementById('reg-password')?.value;
   const errEl = document.getElementById('register-error');
   hideError(errEl);
 
@@ -63,7 +63,8 @@ async function handleRegister() {
 
     toast('Account created! Please sign in.', 'success');
     switchAuthTab('login');
-    document.getElementById('login-identifier').value = username;
+    const li = document.getElementById('login-identifier');
+    if (li) li.value = username;
   } catch (e) {
     showError(errEl, 'Connection failed. Is the server running?');
   }
