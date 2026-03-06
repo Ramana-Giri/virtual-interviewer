@@ -12,6 +12,7 @@ const state = {
   currentQText: '',
   currentQType: 'intro',
   totalQ: 5,
+  language: 'en',          // ← NEW: ISO 639-1 code for the current session
   mediaStream: null,
   mediaRecorder: null,
   recordedChunks: [],

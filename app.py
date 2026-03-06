@@ -40,6 +40,14 @@ Q_TYPE_SCHEDULE = {
 }
 TOTAL_QUESTIONS = 5
 
+# Supported language codes — used for basic validation on incoming requests.
+# Whisper Large v3 supports many more; this is just a safeguard against typos.
+SUPPORTED_LANGUAGES = {
+    'hi', 'ta', 'te', 'bn', 'kn', 'ml', 'mr', 'pa', 'gu', 'ur', 'or', 'as',  # Indian
+    'en', 'es', 'fr', 'de', 'ar', 'ja', 'zh', 'ko', 'pt', 'ru', 'it', 'nl',  # Global
+    'tr', 'vi', 'th', 'id', 'auto'                                              # Others + auto-detect
+}
+
 
 # ─────────────────────────────────────────────
 # HELPERS
@@ -57,15 +65,27 @@ def require_auth(f):
     return decorated
 
 
-def speak(text: str) -> str | None:
+def speak(text: str, language: str = 'en') -> str | None:
     """TTS → base64 MP3. Returns None if unavailable."""
     try:
-        audio_bytes = tts_svc.synthesize(text, voice="onyx")
+        audio_bytes = tts_svc.synthesize(text, voice="onyx", language=language)
         if audio_bytes:
             return base64.b64encode(audio_bytes).decode("utf-8")
     except Exception as e:
         print(f"⚠️  TTS failed (non-fatal): {e}")
     return None
+
+
+def _validate_language(lang_code: str) -> str:
+    """
+    Validates and normalises a language code from the request.
+    Falls back to 'en' if the code is unrecognised.
+    """
+    code = (lang_code or 'en').strip().lower()
+    if code not in SUPPORTED_LANGUAGES:
+        print(f"⚠️  Unknown language code '{code}', defaulting to 'en'.")
+        return 'en'
+    return code
 
 
 def _build_interview_log(responses: list) -> list:
@@ -82,13 +102,13 @@ def _build_interview_log(responses: list) -> list:
             video_m = {}
         log.append({
             "question_index": r.get("question_index"),
-            "question_type": r.get("question_type", "technical"),
-            "question": r.get("question_text"),
-            "transcript": r.get("transcript"),
-            "ai_score": r.get("ai_score", 0),
-            "ai_feedback": r.get("ai_feedback", ""),
-            "audio_metrics": audio_m,
-            "video_metrics": video_m,
+            "question_type":  r.get("question_type", "technical"),
+            "question":       r.get("question_text"),
+            "transcript":     r.get("transcript"),
+            "ai_score":       r.get("ai_score", 0),
+            "ai_feedback":    r.get("ai_feedback", ""),
+            "audio_metrics":  audio_m,
+            "video_metrics":  video_m,
         })
     return log
 
@@ -96,7 +116,7 @@ def _build_interview_log(responses: list) -> list:
 def _complete_session(session_id: str, session_info: dict):
     """
     Called once after Q5 is saved.
-    1. Generates the final AI report.
+    1. Generates the final AI report (in the session language).
     2. Stores it in the `reports` table.
     3. Marks the interview as COMPLETED.
     """
@@ -105,15 +125,17 @@ def _complete_session(session_id: str, session_info: dict):
         _, responses = database.get_full_session_data(session_id)
         interview_log = _build_interview_log(responses)
 
-        detailed_report = llm_svc.generate_final_report(interview_log)
+        language = session_info.get('language', 'en')
+        detailed_report = llm_svc.generate_final_report(interview_log, language=language)
 
         full_payload = {
-            "candidate": session_info["candidate_name"],
-            "role": session_info["target_role"],
+            "candidate":  session_info["candidate_name"],
+            "role":       session_info["target_role"],
             "session_id": session_id,
             "start_time": session_info.get("start_time", ""),
-            "responses": interview_log,
-            "report": detailed_report
+            "language":   language,
+            "responses":  interview_log,
+            "report":     detailed_report
         }
 
         database.save_report(session_id, full_payload)
@@ -131,9 +153,9 @@ def _complete_session(session_id: str, session_info: dict):
 @app.route('/auth/register', methods=['POST'])
 def register():
     data = request.get_json() or {}
-    username = data.get('username', '').strip()
-    email    = data.get('email', '').strip()
-    password = data.get('password', '')
+    username  = data.get('username', '').strip()
+    email     = data.get('email', '').strip()
+    password  = data.get('password', '')
     full_name = data.get('full_name', '').strip()
 
     if not username or not email or not password:
@@ -155,7 +177,7 @@ def register():
 
 @app.route('/auth/login', methods=['POST'])
 def login():
-    data = request.get_json() or {}
+    data       = request.get_json() or {}
     identifier = data.get('username_or_email', '').strip()
     password   = data.get('password', '')
     if not identifier or not password:
@@ -165,7 +187,7 @@ def login():
         return jsonify({"error": result}), 401
     return jsonify({
         "message": "Login successful.",
-        "token": result["token"],
+        "token":   result["token"],
         "user": {
             "user_id":   result["user_id"],
             "username":  result["username"],
@@ -195,26 +217,30 @@ def get_me():
 @app.route('/start_interview', methods=['POST'])
 @require_auth
 def start_interview():
-    data = request.get_json() or {}
-    name = data.get('name', 'Candidate').strip() or 'Candidate'
-    role = data.get('role', 'Software Developer').strip() or 'Software Developer'
+    data     = request.get_json() or {}
+    name     = data.get('name', 'Candidate').strip() or 'Candidate'
+    role     = data.get('role', 'Software Developer').strip() or 'Software Developer'
+    language = _validate_language(data.get('language', 'en'))
 
     session_id = str(uuid.uuid4())[:8]
-    database.create_session(session_id, name, role, user_id=request.user_id)
+    database.create_session(session_id, name, role,
+                             user_id=request.user_id,
+                             language=language)
 
-    first_question = (
-        f"Hello {name}, welcome to your PrepSpark practice session for the {role} role. "
-        f"Let's start — please tell me about yourself and your background."
-    )
-    audio_b64 = speak(first_question)
+    # Generate a localised opening greeting via LLM instead of a hardcoded English string.
+    print(f"🌐 Starting interview | lang={language} | role={role}")
+    first_question = llm_svc.generate_opening_question(name, role, language=language)
+
+    audio_b64 = speak(first_question, language=language)
 
     return jsonify({
-        "session_id":    session_id,
-        "question":      first_question,
-        "question_index": 1,
-        "question_type": "intro",
-        "total_questions": TOTAL_QUESTIONS,
-        "audio_b64":     audio_b64
+        "session_id":       session_id,
+        "question":         first_question,
+        "question_index":   1,
+        "question_type":    "intro",
+        "total_questions":  TOTAL_QUESTIONS,
+        "language":         language,
+        "audio_b64":        audio_b64
     })
 
 
@@ -228,7 +254,7 @@ def resume_interview():
     """
     Returns the state needed to resume an IN_PROGRESS interview.
     Figures out the next unanswered question from saved responses,
-    asks the LLM to generate it, and returns it with TTS audio.
+    asks the LLM to generate it (in the session language), and returns it with TTS audio.
     """
     session_id = request.args.get('session_id', '').strip()
     if not session_id:
@@ -242,6 +268,8 @@ def resume_interview():
     if session_info.get('status') == 'COMPLETED':
         return jsonify({"error": "This session is already completed."}), 400
 
+    language = session_info.get('language', 'en')
+
     answered_indices = {r['question_index'] for r in responses}
     next_index = 1
     for i in range(1, TOTAL_QUESTIONS + 1):
@@ -252,24 +280,27 @@ def resume_interview():
     if next_index > TOTAL_QUESTIONS:
         return jsonify({"error": "All questions answered. Generate the report."}), 400
 
-    next_q_type = Q_TYPE_SCHEDULE.get(next_index, 'technical')
+    next_q_type  = Q_TYPE_SCHEDULE.get(next_index, 'technical')
     chat_history = database.get_chat_history(session_id)
 
-    # Ask LLM for the next question based on conversation history
-    print(f"🔄 Resuming session {session_id} at Q{next_index} [{next_q_type}]…")
+    print(f"🔄 Resuming session {session_id} at Q{next_index} [{next_q_type}] | lang={language}…")
     try:
         llm_result = llm_svc.generate_resume_question(
             target_role=session_info['target_role'],
             q_index=next_index,
             q_type=next_q_type,
-            chat_history=chat_history
+            chat_history=chat_history,
+            language=language
         )
-        next_question = llm_result.get('question', f"Let's continue. Question {next_index}: can you tell me about your experience with {session_info['target_role']} projects?")
+        next_question = llm_result.get(
+            'question',
+            f"Let's continue. Question {next_index}: can you tell me about your experience with {session_info['target_role']} projects?"
+        )
     except Exception as e:
         print(f"⚠️  LLM resume question failed: {e}")
         next_question = f"Welcome back! Continuing from question {next_index}. Can you tell me about a challenging project you've worked on?"
 
-    audio_b64 = speak(next_question)
+    audio_b64 = speak(next_question, language=language)
 
     # Return already-answered responses so the frontend can populate the transcript
     completed = []
@@ -285,6 +316,7 @@ def resume_interview():
         "session_id":          session_id,
         "candidate_name":      session_info["candidate_name"],
         "target_role":         session_info["target_role"],
+        "language":            language,
         "next_question_index": next_index,
         "next_question":       next_question,
         "next_question_type":  next_q_type,
@@ -304,9 +336,9 @@ def submit_response():
     if 'video' not in request.files:
         return jsonify({"error": "No video file provided."}), 400
 
-    session_id      = request.form.get('session_id', '').strip()
-    current_q_text  = request.form.get('question_text', '').strip()
-    current_q_type  = request.form.get('question_type', 'technical').strip()
+    session_id     = request.form.get('session_id', '').strip()
+    current_q_text = request.form.get('question_text', '').strip()
+    current_q_type = request.form.get('question_type', 'technical').strip()
 
     try:
         current_q_index = int(request.form.get('question_index', 1))
@@ -324,16 +356,19 @@ def submit_response():
     if session_info.get('status') == 'COMPLETED':
         return jsonify({"error": "This session is already completed."}), 400
 
+    language = session_info.get('language', 'en')
+
     video_path = os.path.join(UPLOAD_FOLDER, f"{session_id}_{current_q_index}.webm")
     request.files['video'].save(video_path)
 
     try:
-        print(f"▶️  Processing Q{current_q_index} [{current_q_type}] — session {session_id}")
+        print(f"▶️  Processing Q{current_q_index} [{current_q_type}] — session {session_id} | lang={language}")
 
-        # Run video and audio analysis in parallel to cut wall-clock time ~50%
+        # Run video and audio analysis in parallel to cut wall-clock time ~50%.
+        # audio_svc.analyze now receives the language hint for Whisper.
         with ThreadPoolExecutor(max_workers=2) as pool:
             f_video = pool.submit(video_svc.analyze, video_path)
-            f_audio = pool.submit(audio_svc.analyze, video_path)
+            f_audio = pool.submit(audio_svc.analyze, video_path, language)
             video_data = f_video.result()
             audio_data = f_audio.result()
         timeline = timeline_svc.fuse(audio_data, video_data)
@@ -361,7 +396,8 @@ def submit_response():
             next_q_type=next_q_type,
             chat_history=chat_history,
             target_role=session_info['target_role'],
-            current_q_index=current_q_index
+            current_q_index=current_q_index,
+            language=language
         )
 
         ai_feedback   = llm_result.get('feedback', 'No feedback generated.')
@@ -401,7 +437,7 @@ def submit_response():
         })
 
     # ── More questions remaining ──
-    audio_b64 = speak(next_question)
+    audio_b64 = speak(next_question, language=language)
     return jsonify({
         "status":           "next_question",
         "next_question":    next_question,
@@ -437,7 +473,7 @@ def get_report():
 
     if session_info.get('status') != 'COMPLETED':
         return jsonify({
-            "error": "This session is not yet complete. Finish all 5 questions first.",
+            "error":  "This session is not yet complete. Finish all 5 questions first.",
             "status": session_info.get('status', 'IN_PROGRESS')
         }), 400
 
@@ -446,13 +482,15 @@ def get_report():
         # Edge case: status=COMPLETED but report missing (e.g. server crashed mid-write).
         # Regenerate once and save it.
         print(f"⚠️  Report missing for completed session {session_id}. Regenerating…")
-        interview_log = _build_interview_log(responses)
-        detailed_report = llm_svc.generate_final_report(interview_log)
+        language = session_info.get('language', 'en')
+        interview_log   = _build_interview_log(responses)
+        detailed_report = llm_svc.generate_final_report(interview_log, language=language)
         report = {
             "candidate":  session_info["candidate_name"],
             "role":       session_info["target_role"],
             "session_id": session_id,
             "start_time": session_info.get("start_time", ""),
+            "language":   language,
             "responses":  interview_log,
             "report":     detailed_report
         }

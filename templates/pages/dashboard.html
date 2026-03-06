@@ -55,6 +55,51 @@
       <input type="text" id="setup-role" class="form-input" placeholder="e.g. Junior Java Developer, Data Analyst…">
     </div>
 
+    <!-- ── NEW: Language Selector ── -->
+    <div class="form-group">
+      <label class="form-label">Interview Language</label>
+      <select id="setup-language" class="form-input" style="cursor:pointer;">
+
+        <!-- Indian Languages -->
+        <optgroup label="🇮🇳 Indian Languages">
+          <option value="en">English</option>
+          <option value="hi">Hindi — हिन्दी</option>
+          <option value="ta">Tamil — தமிழ்</option>
+          <option value="te">Telugu — తెలుగు</option>
+          <option value="bn">Bengali — বাংলা</option>
+          <option value="kn">Kannada — ಕನ್ನಡ</option>
+          <option value="ml">Malayalam — മലയാളം</option>
+          <option value="mr">Marathi — मराठी</option>
+          <option value="pa">Punjabi — ਪੰਜਾਬੀ</option>
+          <option value="gu">Gujarati — ગુજરાતી</option>
+          <option value="ur">Urdu — اردو</option>
+        </optgroup>
+
+        <!-- Global Languages -->
+        <optgroup label="🌐 Global Languages">
+          <option value="es">Spanish — Español</option>
+          <option value="fr">French — Français</option>
+          <option value="de">German — Deutsch</option>
+          <option value="ar">Arabic — العربية</option>
+          <option value="ja">Japanese — 日本語</option>
+          <option value="zh">Chinese — 中文</option>
+          <option value="ko">Korean — 한국어</option>
+          <option value="pt">Portuguese — Português</option>
+          <option value="ru">Russian — Русский</option>
+        </optgroup>
+
+        <!-- Auto-detect (useful for code-switching like Hinglish) -->
+        <optgroup label="⚙️ Advanced">
+          <option value="auto">Auto-detect (for Hinglish / Tanglish)</option>
+        </optgroup>
+
+      </select>
+      <div style="margin-top:6px;font-size:12px;color:var(--text-dim);font-family:'DM Mono',monospace;">
+        Questions, feedback, and your report will all be in this language.
+      </div>
+    </div>
+    <!-- ── END: Language Selector ── -->
+
     <div class="setup-actions">
       <button class="btn-secondary" onclick="showPage('dashboard-page')">← Back</button>
       <button class="btn-primary" onclick="startInterview()">Begin Session →</button>

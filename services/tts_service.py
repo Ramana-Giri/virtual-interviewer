@@ -2,10 +2,15 @@
 TTSService — Text-to-Speech for the Virtual Interviewer.
 
 Primary:  OpenAI TTS API (high-quality, natural voices)
+          → OpenAI TTS auto-detects language from the text itself.
+            No language code is needed — just pass the text in any language.
+
 Fallback: gTTS (Google Text-to-Speech, free, no API key needed)
+          → gTTS requires an explicit language code (e.g. 'hi', 'ta').
+            The language code from the session is passed through here.
 
 Set OPENAI_API_KEY in your .env to use the high-quality voice.
-If the key is missing, gTTS is used automatically.
+If the key is missing or the call fails, gTTS is used automatically.
 """
 
 import os
@@ -21,24 +26,31 @@ class TTSService:
         self.mode = "openai" if self.openai_key else "gtts"
         print(f"🔊 TTS Service initialized — using {'OpenAI TTS' if self.mode == 'openai' else 'gTTS (free fallback)'}.")
 
-    def synthesize(self, text: str, voice: str = "onyx") -> bytes | None:
+    def synthesize(self, text: str, voice: str = "onyx",
+                   language: str = "en") -> bytes | None:
         """
         Converts text to MP3 audio bytes.
 
         Args:
-            text:  The question/sentence to speak.
-            voice: OpenAI voice name (onyx sounds professional/authoritative).
-                   Options: alloy, echo, fable, onyx, nova, shimmer
+            text:     The question/sentence to speak.
+            voice:    OpenAI voice name (onyx sounds professional/authoritative).
+                      Options: alloy, echo, fable, onyx, nova, shimmer
+            language: ISO 639-1 language code (e.g. 'hi', 'ta', 'en').
+                      Used by gTTS. OpenAI TTS auto-detects from the text
+                      so this has no effect when OpenAI TTS is active.
 
         Returns:
             MP3 bytes on success, None on failure.
         """
         if self.mode == "openai":
-            return self._synthesize_openai(text, voice)
+            # OpenAI TTS auto-detects the language from the Unicode text content.
+            # No language param is needed — Hindi/Tamil text will be spoken correctly.
+            return self._synthesize_openai(text, voice, language)
         else:
-            return self._synthesize_gtts(text)
+            return self._synthesize_gtts(text, language)
 
-    def _synthesize_openai(self, text: str, voice: str) -> bytes | None:
+    def _synthesize_openai(self, text: str, voice: str,
+                            language: str = "en") -> bytes | None:
         try:
             from openai import OpenAI
             client = OpenAI(api_key=self.openai_key)
@@ -51,12 +63,28 @@ class TTSService:
             return response.content
         except Exception as e:
             print(f"❌ OpenAI TTS Error: {e}. Falling back to gTTS.")
-            return self._synthesize_gtts(text)
+            return self._synthesize_gtts(text, language)
 
-    def _synthesize_gtts(self, text: str) -> bytes | None:
+    def _synthesize_gtts(self, text: str, language: str = "en") -> bytes | None:
+        """
+        Uses Google Text-to-Speech (free, no API key).
+        language must be a valid gTTS language code.
+
+        Supported Indian language codes for gTTS:
+            hi = Hindi, ta = Tamil, te = Telugu, bn = Bengali,
+            kn = Kannada, ml = Malayalam, mr = Marathi,
+            gu = Gujarati, pa = Punjabi (limited support)
+        """
         try:
             from gtts import gTTS
-            tts = gTTS(text=text, lang='en', slow=False)
+            # gTTS uses the same 2-letter ISO 639-1 codes we store in the session.
+            # If an unsupported code is passed, fall back to English silently.
+            try:
+                tts = gTTS(text=text, lang=language, slow=False)
+            except ValueError:
+                print(f"⚠️  gTTS: unsupported language '{language}', falling back to English.")
+                tts = gTTS(text=text, lang='en', slow=False)
+
             buf = io.BytesIO()
             tts.write_to_fp(buf)
             buf.seek(0)
@@ -69,11 +97,20 @@ class TTSService:
 # --- TEST ---
 if __name__ == "__main__":
     svc = TTSService()
-    sample = "Hello! Welcome to your technical interview. Please tell me about yourself."
-    audio = svc.synthesize(sample)
-    if audio:
-        with open("test_tts_output.mp3", "wb") as f:
-            f.write(audio)
-        print(f"✅ Audio saved: {len(audio)} bytes → test_tts_output.mp3")
-    else:
-        print("❌ TTS failed.")
+
+    tests = [
+        ("en", "Hello! Welcome to your technical interview. Please tell me about yourself."),
+        ("hi", "नमस्ते! अपने बारे में बताइए और आपकी पृष्ठभूमि क्या है?"),
+        ("ta", "வணக்கம்! உங்களைப் பற்றி சொல்லுங்கள், உங்கள் பின்னணி என்ன?"),
+    ]
+
+    for lang, text in tests:
+        print(f"\n🧪 Testing language: {lang}")
+        audio = svc.synthesize(text, language=lang)
+        if audio:
+            path = f"test_tts_{lang}.mp3"
+            with open(path, "wb") as f:
+                f.write(audio)
+            print(f"✅ Saved: {path} ({len(audio)} bytes)")
+        else:
+            print(f"❌ TTS failed for language: {lang}")

@@ -36,6 +36,7 @@ def init_db():
         target_role TEXT,
         start_time TEXT,
         status TEXT DEFAULT 'IN_PROGRESS',
+        language TEXT DEFAULT 'en',
         FOREIGN KEY(user_id) REFERENCES users(id)
     )''')
 
@@ -77,6 +78,10 @@ def _run_migrations(c):
     if "user_id" not in cols:
         c.execute("ALTER TABLE interviews ADD COLUMN user_id INTEGER")
         print("  ↳ Migrated: interviews.user_id")
+    # ── NEW: language column for multilingual support ──
+    if "language" not in cols:
+        c.execute("ALTER TABLE interviews ADD COLUMN language TEXT DEFAULT 'en'")
+        print("  ↳ Migrated: interviews.language")
 
     c.execute("PRAGMA table_info(responses)")
     cols = [r[1] for r in c.fetchall()]
@@ -165,12 +170,14 @@ def logout_user(token):
 # INTERVIEWS
 # ─────────────────────────────────────────────
 
-def create_session(session_id, name, role, user_id=None):
+def create_session(session_id, name, role, user_id=None, language='en'):
+    """Creates a new interview session. language is a 2-letter ISO 639-1 code e.g. 'hi', 'ta'."""
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     c.execute(
-        "INSERT INTO interviews (session_id, user_id, candidate_name, target_role, start_time, status) VALUES (?, ?, ?, ?, ?, 'IN_PROGRESS')",
-        (session_id, user_id, name, role, datetime.now().isoformat())
+        "INSERT INTO interviews (session_id, user_id, candidate_name, target_role, start_time, status, language) "
+        "VALUES (?, ?, ?, ?, ?, 'IN_PROGRESS', ?)",
+        (session_id, user_id, name, role, datetime.now().isoformat(), language)
     )
     conn.commit()
     conn.close()
@@ -231,7 +238,8 @@ def get_session_info(session_id):
 
 
 def get_full_session_data(session_id):
-    """Returns (session_dict, [response_dicts]) ordered by question_index."""
+    """Returns (session_dict, [response_dicts]) ordered by question_index.
+    session_dict now includes 'language' key."""
     conn = sqlite3.connect(DB_NAME)
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
@@ -306,6 +314,7 @@ def get_user_interviews(user_id):
                 i.target_role,
                 i.start_time,
                 i.status,
+                i.language,
                 COUNT(r.id)              AS response_count,
                 ROUND(AVG(r.ai_score),1) AS avg_score
         FROM interviews i

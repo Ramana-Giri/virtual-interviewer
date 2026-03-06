@@ -18,6 +18,16 @@ const Q_TYPE_LABELS = {
   behavioural: 'Behavioural'
 };
 
+// Maps ISO 639-1 codes to short display labels shown in the language badge.
+const LANG_LABELS = {
+  hi: 'हिन्दी', ta: 'தமிழ்', te: 'తెలుగు', bn: 'বাংলা',
+  kn: 'ಕನ್ನಡ', ml: 'മലയാളം', mr: 'मराठी', pa: 'ਪੰਜਾਬੀ',
+  gu: 'ગુજરાતી', ur: 'اردو', en: 'English', es: 'Español',
+  fr: 'Français', de: 'Deutsch', ar: 'العربية', ja: '日本語',
+  zh: '中文', ko: '한국어', pt: 'Português', ru: 'Русский',
+  auto: 'Auto',
+};
+
 // ─── Camera (on-demand) ───────────────────────────
 
 async function openCamera() {
@@ -60,9 +70,10 @@ function setSensorBadge(id, text, cls) {
 // ─── Start New Interview ───────────────────────────
 
 async function startInterview() {
-  const name  = document.getElementById('setup-name')?.value.trim();
-  const role  = document.getElementById('setup-role')?.value.trim();
-  const errEl = document.getElementById('setup-error');
+  const name     = document.getElementById('setup-name')?.value.trim();
+  const role     = document.getElementById('setup-role')?.value.trim();
+  const language = document.getElementById('setup-language')?.value || 'en'; // ← NEW
+  const errEl    = document.getElementById('setup-error');
   if (errEl) errEl.style.display = 'none';
 
   if (!name || !role) {
@@ -74,7 +85,7 @@ async function startInterview() {
     const res  = await fetch(`${API}/start_interview`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body:    JSON.stringify({ name, role })
+      body:    JSON.stringify({ name, role, language })  // ← language added
     });
     const data = await res.json();
     if (!res.ok) { showError(errEl, data.error); return; }
@@ -84,6 +95,7 @@ async function startInterview() {
     state.currentQText  = data.question;
     state.currentQType  = 'intro';
     state.totalQ        = 5;
+    state.language      = data.language || language;  // ← store in state
 
     showPage('interview-page');
     setupInterviewUI(data);
@@ -112,6 +124,9 @@ function setupInterviewUI(data) {
   if (navRole && setupRole) navRole.textContent = setupRole.value;
   if (nameTag && setupName) nameTag.textContent = setupName.value || 'You';
 
+  // ── NEW: Show language badge in topbar ──
+  updateLanguageBadge(data.language || state.language);
+
   updateQuestionCard(data.question_index, data.question, Q_TYPES[data.question_index] || 'intro');
   buildQPips(data.question_index);
 
@@ -119,6 +134,36 @@ function setupInterviewUI(data) {
   if (log) log.innerHTML = '<div class="iv-transcript-empty">Your answers will appear here after each submission.</div>';
 
   setHint('The AI interviewer will speak each question. Recording activates automatically when they finish.');
+}
+
+// ── NEW: update/create the language badge in the topbar ──
+function updateLanguageBadge(langCode) {
+  if (!langCode) return;
+  const label = LANG_LABELS[langCode] || langCode.toUpperCase();
+
+  // Re-use existing badge if already injected, otherwise create it
+  let badge = document.getElementById('iv-lang-badge');
+  if (!badge) {
+    badge = document.createElement('span');
+    badge.id = 'iv-lang-badge';
+    badge.style.cssText = [
+      'font-family:"DM Mono",monospace',
+      'font-size:11px',
+      'color:var(--text-muted)',
+      'background:rgba(255,255,255,0.05)',
+      'border:1px solid rgba(255,255,255,0.08)',
+      'border-radius:100px',
+      'padding:2px 10px',
+      'letter-spacing:0.03em',
+    ].join(';');
+
+    // Insert it next to the session badge in the topbar-right
+    const sessionBadge = document.getElementById('session-badge');
+    if (sessionBadge && sessionBadge.parentNode) {
+      sessionBadge.parentNode.insertBefore(badge, sessionBadge);
+    }
+  }
+  badge.textContent = '🌐 ' + label;
 }
 
 function updateQuestionCard(index, text, type) {
@@ -286,6 +331,8 @@ async function submitResponse() {
   fd.append('question_index', state.currentQIndex);
   fd.append('question_text',  state.currentQText);
   fd.append('question_type',  state.currentQType);
+  // Note: language is NOT sent here — the backend reads it from the session DB,
+  // so there's no need to send it again on every submission.
 
   showProcessing();
 

@@ -20,26 +20,41 @@ const SKIP_REPORT_KEYS = new Set([
 ]);
 
 const INSIGHT_LABELS = {
-  technical_depth: 'Technical Depth',
-  'Technical Depth': 'Technical Depth',
-  technical_analysis: 'Technical Analysis',
-  behavioral_signals: 'Behavioural Signals',
-  'Behavioral Signals': 'Behavioural Signals',
-  behavioral_analysis: 'Behavioural Analysis',
-  communication: 'Communication Style',
-  'Communication Style': 'Communication Style',
-  key_observations: 'Key Observations',
-  'Key Observations': 'Key Observations',
-  strengths: 'Strengths',
-  Strengths: 'Strengths',
-  areas_for_improvement: 'Areas to Improve',
-  'Areas for Improvement': 'Areas to Improve',
-  weaknesses: 'Weaknesses',
-  Weaknesses: 'Weaknesses',
-  content_analysis: 'Content Analysis',
-  'Content Analysis': 'Content Analysis',
-  mental_state: 'Mental State',
-  'Mental State': 'Mental State',
+  technical_depth:        'Technical Depth',
+  'Technical Depth':      'Technical Depth',
+  technical_analysis:     'Technical Analysis',
+  behavioral_signals:     'Behavioural Signals',
+  behavioural_signals:    'Behavioural Signals',   // ← NEW key from updated backend
+  'Behavioral Signals':   'Behavioural Signals',
+  behavioral_analysis:    'Behavioural Analysis',
+  communication:          'Communication Style',
+  communication_style:    'Communication Style',   // ← NEW key from updated backend
+  'Communication Style':  'Communication Style',
+  key_observations:       'Key Observations',
+  'Key Observations':     'Key Observations',
+  strengths:              'Strengths',
+  Strengths:              'Strengths',
+  areas_for_improvement:  'Areas to Improve',
+  'Areas for Improvement':'Areas to Improve',
+  weaknesses:             'Weaknesses',
+  Weaknesses:             'Weaknesses',
+  content_analysis:       'Content Analysis',
+  'Content Analysis':     'Content Analysis',
+  mental_state:           'Mental State',
+  'Mental State':         'Mental State',
+  coaching_tips:          'Coaching Tips',         // ← NEW key from updated backend
+  'Coaching Tips':        'Coaching Tips',
+};
+
+// Maps language codes to display names for the report header
+const LANG_DISPLAY = {
+  hi: 'Hindi — हिन्दी',    ta: 'Tamil — தமிழ்',   te: 'Telugu — తెలుగు',
+  bn: 'Bengali — বাংলা',   kn: 'Kannada — ಕನ್ನಡ', ml: 'Malayalam — മലയാളം',
+  mr: 'Marathi — मराठी',   pa: 'Punjabi — ਪੰਜਾਬੀ',gu: 'Gujarati — ગુજરાતી',
+  ur: 'Urdu — اردو',       en: 'English',          es: 'Spanish',
+  fr: 'French',             de: 'German',           ar: 'Arabic',
+  ja: 'Japanese',           zh: 'Chinese',          ko: 'Korean',
+  pt: 'Portuguese',         ru: 'Russian',
 };
 
 async function loadReport(sessionId) {
@@ -53,6 +68,10 @@ async function loadReport(sessionId) {
   document.getElementById('verdict-banner').className = 'verdict-banner verdict-neutral';
   document.getElementById('verdict-title').textContent = '…';
   document.getElementById('verdict-sub').textContent = '';
+
+  // ── NEW: clear language badge if it exists from a previous load ──
+  const existingLangBadge = document.getElementById('rpt-lang-badge');
+  if (existingLangBadge) existingLangBadge.remove();
 
   try {
     const res = await fetch(`${API}/generate_report?session_id=${sessionId}`, {
@@ -74,15 +93,41 @@ async function loadReport(sessionId) {
 }
 
 function renderReport(data) {
-  const { candidate, role, session_id, start_time, responses, report } = data;
+  const { candidate, role, session_id, start_time, responses, report, language } = data;
 
   // ── Header ──
   document.getElementById('rpt-title').textContent = candidate;
-  document.getElementById('rpt-role').textContent = role;
-  document.getElementById('rpt-date').textContent = start_time
+  document.getElementById('rpt-role').textContent  = role;
+  document.getElementById('rpt-date').textContent  = start_time
     ? new Date(start_time).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
     : 'Unknown date';
   document.getElementById('rpt-session').textContent = '#' + session_id;
+
+  // ── NEW: Language badge next to session ID ──
+  if (language && language !== 'en') {
+    const langText = LANG_DISPLAY[language] || language.toUpperCase();
+    const langBadge = document.createElement('span');
+    langBadge.id = 'rpt-lang-badge';
+    langBadge.style.cssText = [
+      'display:inline-block',
+      'font-family:"DM Mono",monospace',
+      'font-size:11px',
+      'color:var(--accent-2)',
+      'background:rgba(255,255,255,0.04)',
+      'border:1px solid rgba(255,255,255,0.08)',
+      'border-radius:100px',
+      'padding:2px 10px',
+      'margin-left:8px',
+      'vertical-align:middle',
+    ].join(';');
+    langBadge.textContent = '🌐 ' + langText;
+
+    // Insert it after the session ID element
+    const sessionEl = document.getElementById('rpt-session');
+    if (sessionEl && sessionEl.parentNode) {
+      sessionEl.parentNode.insertBefore(langBadge, sessionEl.nextSibling);
+    }
+  }
 
   // ── Verdict ──
   const verdictRaw = (
@@ -92,35 +137,35 @@ function renderReport(data) {
   ).toString().trim();
 
   const banner = document.getElementById('verdict-banner');
-  const icon = document.getElementById('verdict-icon');
+  const icon   = document.getElementById('verdict-icon');
   const vTitle = document.getElementById('verdict-title');
-  const vSub = document.getElementById('verdict-sub');
+  const vSub   = document.getElementById('verdict-sub');
 
   banner.className = 'verdict-banner';
 
   if (!verdictRaw) {
     banner.classList.add('verdict-neutral');
-    icon.textContent = '📋';
+    icon.textContent  = '📋';
     vTitle.textContent = 'Practice Session Complete';
-    vSub.textContent = 'Review the detailed feedback below.';
+    vSub.textContent   = 'Review the detailed feedback below.';
   } else {
     const v = verdictRaw.toLowerCase();
-    const isHire = (v.includes('hire') || v.includes('yes') || v.includes('strong'))
+    const isHire = (v.includes('hire') || v.includes('yes') || v.includes('strong') || v.includes('ready'))
       && !v.includes('no hire') && !v.includes('not recommend');
     const isNoHire = v.includes('no hire') || v.includes('not recommend')
-      || v.includes('reject') || (v.includes('no') && v.includes('hire'));
+      || v.includes('reject') || v.includes('more practice');
 
     if (isHire) {
       banner.classList.add('verdict-hire');
-      icon.textContent = '✅';
+      icon.textContent   = '✅';
       vTitle.textContent = 'Interview-Ready';
     } else if (isNoHire) {
       banner.classList.add('verdict-no-hire');
-      icon.textContent = '📌';
+      icon.textContent   = '📌';
       vTitle.textContent = 'More Practice Recommended';
     } else {
       banner.classList.add('verdict-training');
-      icon.textContent = '📈';
+      icon.textContent   = '📈';
       vTitle.textContent = 'Getting There — Keep Practising';
     }
     vSub.textContent = verdictRaw;
@@ -135,7 +180,6 @@ function renderReport(data) {
   if (execSummary && typeof execSummary === 'string') {
     summaryEl.textContent = execSummary;
   } else if (execSummary && typeof execSummary === 'object') {
-    // Gemini occasionally returns summary as a nested object — flatten it
     summaryEl.textContent = Object.values(execSummary).join(' ');
   } else {
     document.getElementById('exec-summary-section').style.display = 'none';
@@ -147,7 +191,7 @@ function renderReport(data) {
   let totalScore = 0;
 
   responses.forEach(r => {
-    const s = r.ai_score || 0;
+    const s   = r.ai_score || 0;
     totalScore += s;
     const cls = s >= 8 ? 'high' : s >= 5 ? 'mid' : 'low';
     const card = document.createElement('div');
@@ -161,7 +205,7 @@ function renderReport(data) {
   });
 
   // Overall card
-  const avg = responses.length ? (totalScore / responses.length).toFixed(1) : 0;
+  const avg    = responses.length ? (totalScore / responses.length).toFixed(1) : 0;
   const avgCls = avg >= 8 ? 'high' : avg >= 5 ? 'mid' : 'low';
   const overallCard = document.createElement('div');
   overallCard.className = 'score-card';
@@ -188,14 +232,12 @@ function renderReport(data) {
       if (typeof value === 'string') {
         content = value;
       } else if (Array.isArray(value)) {
-        // Render arrays as a clean bullet list
         content = value.map(item =>
           typeof item === 'string'
             ? `• ${item}`
             : `• ${JSON.stringify(item)}`
         ).join('\n');
       } else if (typeof value === 'object') {
-        // Render nested objects as labeled lines
         content = Object.entries(value)
           .map(([k, v]) => `${k.replace(/_/g, ' ')}: ${v}`)
           .join('\n');
@@ -221,24 +263,24 @@ function renderReport(data) {
   qaHistory.innerHTML = '';
 
   responses.forEach(r => {
-    const s = r.ai_score || 0;
+    const s          = r.ai_score || 0;
     const scoreColor = s >= 8 ? 'var(--score-high)' : s >= 5 ? 'var(--score-mid)' : 'var(--score-low)';
-    const qType = Q_TYPE_MAP[r.question_index] || 'technical';
+    const qType      = Q_TYPE_MAP[r.question_index] || 'technical';
     const qTypeLabel = { intro: 'Introduction', technical: 'Technical', behavioural: 'Behavioural' }[qType];
 
     // Audio & video behavioral chips
     let chips = '';
     try {
       const am = typeof r.audio_metrics === 'string' ? JSON.parse(r.audio_metrics) : (r.audio_metrics || {});
-      if (am.wpm) chips += `<span class="beh-chip">${am.wpm} WPM</span>`;
-      if (am.jitter_percent !== undefined) chips += `<span class="beh-chip">Jitter ${am.jitter_percent}%</span>`;
-      if (am.avg_pitch_hz) chips += `<span class="beh-chip">${am.avg_pitch_hz} Hz</span>`;
+      if (am.wpm)                    chips += `<span class="beh-chip">${am.wpm} WPM</span>`;
+      if (am.jitter_percent != null) chips += `<span class="beh-chip">Jitter ${am.jitter_percent}%</span>`;
+      if (am.avg_pitch_hz)           chips += `<span class="beh-chip">${am.avg_pitch_hz} Hz</span>`;
     } catch (e) {}
     try {
       const vm = typeof r.video_metrics === 'string' ? JSON.parse(r.video_metrics) : (r.video_metrics || {});
-      if (vm.gaze_screen_pct !== undefined) chips += `<span class="beh-chip">Eye contact ${vm.gaze_screen_pct}%</span>`;
-      if (vm.dominant_emotion) chips += `<span class="beh-chip">${vm.dominant_emotion}</span>`;
-      if (vm.blink_rate) chips += `<span class="beh-chip">${vm.blink_rate} blinks/min</span>`;
+      if (vm.gaze_screen_pct != null) chips += `<span class="beh-chip">Eye contact ${vm.gaze_screen_pct}%</span>`;
+      if (vm.dominant_emotion)        chips += `<span class="beh-chip">${vm.dominant_emotion}</span>`;
+      if (vm.blink_rate)              chips += `<span class="beh-chip">${vm.blink_rate} blinks/min</span>`;
     } catch (e) {}
 
     const item = document.createElement('div');

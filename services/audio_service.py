@@ -31,12 +31,12 @@ class AudioService:
 
         cmd = [
             "ffmpeg",
-            "-y",                  # Overwrite without asking
-            "-i", video_path,      # Input file (any format)
-            "-vn",                 # No video
-            "-acodec", "pcm_s16le",  # WAV PCM 16-bit
-            "-ar", "16000",        # 16kHz sample rate (Whisper optimal)
-            "-ac", "1",            # Mono
+            "-y",                   # Overwrite without asking
+            "-i", video_path,       # Input file (any format)
+            "-vn",                  # No video
+            "-acodec", "pcm_s16le", # WAV PCM 16-bit
+            "-ar", "16000",         # 16kHz sample rate (Whisper optimal)
+            "-ac", "1",             # Mono
             audio_path
         ]
 
@@ -69,8 +69,17 @@ class AudioService:
             print(f"❌ Audio Extraction Error: {e}")
             return None
 
-    def analyze(self, video_path):
-        print(f"🎙️ Analyzing Audio: {video_path}")
+    def analyze(self, video_path, language: str = 'en'):
+        """
+        Analyzes audio from the given video path.
+
+        Args:
+            video_path: Path to the video file.
+            language:   ISO 639-1 language code (e.g. 'hi', 'ta', 'en').
+                        Pass 'auto' to let Whisper detect automatically —
+                        useful for code-switching (Hinglish, Tanglish, etc.).
+        """
+        print(f"🎙️ Analyzing Audio: {video_path} | Language: {language}")
 
         # 1. Extract .wav
         audio_path = self.extract_audio_from_video(video_path)
@@ -89,16 +98,26 @@ class AudioService:
 
         print("Starting transcription...")
 
-        # 2. Groq Transcription
+        # 2. Groq Transcription (Whisper Large v3)
         transcript_text = ""
         groq_json = {}
         try:
             with open(audio_path, "rb") as file:
+                # Build kwargs — only pass language when it's not 'auto'
+                # Whisper Large v3 auto-detects when language is omitted.
+                # Passing a specific language improves accuracy and speed
+                # for single-language speakers (e.g. pure Tamil or pure Hindi).
+                transcription_kwargs = {
+                    "file": (os.path.basename(audio_path), file.read()),
+                    "model": "whisper-large-v3",
+                    "response_format": "verbose_json",
+                    "timestamp_granularities": ["word"],
+                }
+                if language and language.lower() != 'auto':
+                    transcription_kwargs["language"] = language
+
                 transcription = self.client.audio.transcriptions.create(
-                    file=(os.path.basename(audio_path), file.read()),
-                    model="whisper-large-v3",
-                    response_format="verbose_json",
-                    timestamp_granularities=["word"]
+                    **transcription_kwargs
                 )
             transcript_text = transcription.text or ""
             groq_json = transcription.to_dict() if hasattr(transcription, 'to_dict') else {}
@@ -203,7 +222,7 @@ if __name__ == '__main__':
         print(f"🚀 Testing AudioService on {test_video}...")
         start = time.time()
         service = AudioService()
-        result = service.analyze(test_video)
+        result = service.analyze(test_video, language='hi')   # test with Hindi
         print("\n" + "=" * 60)
         print(json.dumps({k: v for k, v in result.items() if k != 'frame_log'}, indent=2))
         print(f"⏱ Total: {time.time() - start:.1f}s")
