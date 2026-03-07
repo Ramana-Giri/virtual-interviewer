@@ -7,6 +7,12 @@ load_dotenv()
 
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
+# ─────────────────────────────────────────────
+# CONSTANTS
+# ─────────────────────────────────────────────
+MIN_QUESTIONS = 5   # LLM cannot end the session before this many answers
+MAX_QUESTIONS = 10  # Session is force-ended at this count regardless
+
 
 class LLMService:
     def __init__(self):
@@ -16,54 +22,23 @@ class LLMService:
     # LANGUAGE SUPPORT
     # ─────────────────────────────────────────────
 
-    # Maps ISO 639-1 codes to full language names used in prompts.
-    # Gemini understands full names much more reliably than codes alone.
     LANGUAGE_NAMES = {
-        # Indian languages
-        'hi': 'Hindi',
-        'ta': 'Tamil',
-        'te': 'Telugu',
-        'bn': 'Bengali',
-        'kn': 'Kannada',
-        'ml': 'Malayalam',
-        'mr': 'Marathi',
-        'pa': 'Punjabi',
-        'gu': 'Gujarati',
-        'ur': 'Urdu',
-        'or': 'Odia',
-        'as': 'Assamese',
-        # Global languages
-        'en': 'English',
-        'es': 'Spanish',
-        'fr': 'French',
-        'de': 'German',
-        'ar': 'Arabic',
-        'ja': 'Japanese',
-        'zh': 'Chinese',
-        'ko': 'Korean',
-        'pt': 'Portuguese',
-        'ru': 'Russian',
-        'it': 'Italian',
-        'nl': 'Dutch',
-        'tr': 'Turkish',
-        'vi': 'Vietnamese',
-        'th': 'Thai',
-        'id': 'Indonesian',
+        'hi': 'Hindi', 'ta': 'Tamil', 'te': 'Telugu', 'bn': 'Bengali',
+        'kn': 'Kannada', 'ml': 'Malayalam', 'mr': 'Marathi', 'pa': 'Punjabi',
+        'gu': 'Gujarati', 'ur': 'Urdu', 'or': 'Odia', 'as': 'Assamese',
+        'en': 'English', 'es': 'Spanish', 'fr': 'French', 'de': 'German',
+        'ar': 'Arabic', 'ja': 'Japanese', 'zh': 'Chinese', 'ko': 'Korean',
+        'pt': 'Portuguese', 'ru': 'Russian', 'it': 'Italian', 'nl': 'Dutch',
+        'tr': 'Turkish', 'vi': 'Vietnamese', 'th': 'Thai', 'id': 'Indonesian',
     }
 
     def _lang_name(self, code: str) -> str:
-        """Returns the full language name for a given ISO 639-1 code."""
         return self.LANGUAGE_NAMES.get(code.lower(), 'English')
 
     def _lang_instruction(self, language: str) -> str:
-        """
-        Returns the standard language instruction block prepended to every prompt.
-        Instructs Gemini to write all content in the target language while keeping
-        JSON keys in English so the frontend parser never breaks.
-        """
         lang_name = self._lang_name(language)
         if language.lower() == 'en':
-            return ""  # No instruction needed for English — it's the default
+            return ""
         return (
             f"LANGUAGE INSTRUCTION: You MUST write all response text in {lang_name}.\n"
             f"This includes feedback, questions, summaries, and any prose fields.\n"
@@ -73,28 +48,68 @@ class LLMService:
         )
 
     # ─────────────────────────────────────────────
-    # OPENING QUESTION (replaces hardcoded greeting in app.py)
+    # CONTEXT BUILDERS
     # ─────────────────────────────────────────────
 
-    def generate_opening_question(self, candidate_name: str,
-                                   target_role: str,
+    def _build_context_block(self, resume_text: str = None,
+                              job_description: str = None) -> str:
+        """Builds the resume/JD context block injected into every prompt."""
+        parts = []
+        if resume_text and resume_text.strip():
+            truncated = resume_text.strip()[:3000]
+            parts.append(f"CANDIDATE RESUME:\n{truncated}")
+        if job_description and job_description.strip():
+            truncated = job_description.strip()[:2000]
+            parts.append(f"JOB DESCRIPTION:\n{truncated}")
+        if parts:
+            return "\n\n".join(parts) + "\n\n"
+        return ""
+
+    def _build_history_text(self, chat_history: list) -> str:
+        if not chat_history:
+            return ""
+        text = "CONVERSATION SO FAR:\n"
+        for item in chat_history:
+            q = item.get('q_text', '')
+            t = item.get('q_type', 'technical')
+            a = (item.get('transcript', '') or '')[:300]
+            text += f"- [{t.upper()}] Q: {q}\n  A: {a}\n"
+        return text
+
+    # ─────────────────────────────────────────────
+    # OPENING QUESTION
+    # ─────────────────────────────────────────────
+
+    def generate_opening_question(self, candidate_name: str, target_role: str,
+                                   resume_text: str = None,
+                                   job_description: str = None,
                                    language: str = 'en') -> str:
-        """
-        Generates a warm, localised opening greeting for the interview.
-        Called from app.py start_interview() instead of a hardcoded English string.
-        """
+        """Generates a warm, personalised opening greeting for the interview."""
         lang_name = self._lang_name(language)
         lang_instruction = self._lang_instruction(language)
+        context_block = self._build_context_block(resume_text, job_description)
+
+        # Build a personalised hook if resume is available
+        resume_hint = ""
+        if resume_text and resume_text.strip():
+            resume_hint = (
+                "You have access to the candidate's resume — weave one specific, "
+                "concrete detail from it (a project, a company, a technology they listed) "
+                "naturally into your opening to show you've read it. This makes the greeting "
+                "feel personal, not generic."
+            )
 
         prompt = f"""{lang_instruction}You are an AI interviewer for PrepSpark. Generate a warm, professional opening greeting for a mock interview.
 
-Candidate name: {candidate_name}
+{context_block}Candidate name: {candidate_name}
 Target role: {target_role}
+
+{resume_hint}
 
 The greeting should:
 - Welcome the candidate by their first name
 - Mention the role they are practising for
-- Ask them to introduce themselves and their background
+- Ask them to introduce themselves and their background (if resume provided, ask them to walk you through the highlights)
 - Be 2-3 sentences, natural and friendly
 - Be written entirely in {lang_name}
 
@@ -105,7 +120,6 @@ Respond with ONLY the greeting text. No JSON, no labels, no extra commentary."""
             return response.text.strip()
         except Exception as e:
             print(f"❌ Opening question error: {e}")
-            # Safe English fallback
             return (
                 f"Hello {candidate_name}, welcome to your PrepSpark practice session "
                 f"for the {target_role} role. "
@@ -117,32 +131,32 @@ Respond with ONLY the greeting text. No JSON, no labels, no extra commentary."""
     # ─────────────────────────────────────────────
 
     def analyze_response(self, transcript, timeline, audio_summary, video_summary,
-                         current_question, current_q_type, next_q_type,
-                         chat_history, target_role, current_q_index,
-                         language: str = 'en'):
+                         current_question, current_q_type, chat_history,
+                         target_role, current_q_index, language: str = 'en',
+                         resume_text: str = None, job_description: str = None):
         """
-        Evaluates the candidate's answer.
-        If current_q_index < 5: also generates the next question.
-        If current_q_index == 5: this IS Q5 (behavioural) — no next question needed.
+        Evaluates the candidate's answer and either generates the next question
+        or signals that the interview is complete.
 
-        Args:
-            language: ISO 639-1 code. All feedback and next_question will be in this language.
+        Dynamic completion logic:
+        - After MIN_QUESTIONS answered: LLM may decide to end if coverage is sufficient.
+        - At MAX_QUESTIONS: always ends.
+
+        Returns a dict with keys:
+          feedback        : str  — coaching feedback
+          next_question   : str  — next question text (or closing if complete)
+          next_q_type     : str  — 'intro' | 'technical' | 'behavioural' | 'resume_probe'
+          score           : int  — 1-10
+          interview_complete : bool
         """
         lang_instruction = self._lang_instruction(language)
         lang_name = self._lang_name(language)
-
-        # ── Build history string ──
-        history_text = ""
-        if chat_history:
-            history_text = "PREVIOUS CONVERSATION:\n"
-            for item in chat_history:
-                q = item.get('q_text', '')
-                a = (item.get('transcript', '') or '')[:300]
-                history_text += f"- Q: {q}\n  A: {a}\n"
+        context_block = self._build_context_block(resume_text, job_description)
+        history_text = self._build_history_text(chat_history)
 
         # ── Build timeline string ──
         timeline_str = ""
-        for event in timeline[:20]:   # cap at 20 events
+        for event in timeline[:20]:
             t = event.get('timestamp', '')
             if event.get('event') == "LONG_PAUSE":
                 timeline_str += f"[{t}] SILENCE ({event.get('duration', '')}s)\n"
@@ -153,65 +167,111 @@ Respond with ONLY the greeting text. No JSON, no labels, no extra commentary."""
                     f"Face={beh.get('expression', 'Neutral')}\n"
                 )
 
-        is_last = (current_q_index >= 5)
+        force_complete = (current_q_index >= MAX_QUESTIONS)
+        can_complete   = (current_q_index >= MIN_QUESTIONS)
 
-        # ── Build next-question instruction (only used when NOT last) ──
-        if not is_last:
-            next_q_instructions = {
-                'intro': "Ask a natural self-introduction or background question.",
-                'technical': (
-                    f"Ask ONE specific technical question for a {target_role} role. "
-                    f"Focus on algorithms, system design, frameworks, or role-specific tools. "
-                    f"Make it progressively harder than previous questions. "
-                    f"Do NOT ask about personal life, hobbies, or team dynamics."
-                ),
-                'behavioural': (
-                    f"Ask ONE behavioural question using STAR format. "
-                    f"Choose from: 'Tell me about a time you handled a difficult deadline', "
-                    f"'Describe a situation where you disagreed with a teammate and how you resolved it', "
-                    f"'Give an example of a project you are proud of and your specific contribution', "
-                    f"'Walk me through a time you had to learn something completely new under pressure'. "
-                    f"Pick whichever fits best given the conversation so far."
-                )
-            }.get(next_q_type, "Ask a relevant follow-up technical question.")
+        # ── Coverage checklist for the LLM to reason about ──
+        types_covered = [item.get('q_type', '') for item in chat_history]
+        has_intro       = 'intro'       in types_covered
+        has_technical   = 'technical'   in types_covered or 'resume_probe' in types_covered
+        has_behavioural = 'behavioural' in types_covered
 
-            next_q_section = f"""
-NEXT QUESTION (type: {next_q_type}):
-{next_q_instructions}
-Keep it to 1-2 sentences. Do not say "great answer" or reveal the score.
-The next_question field MUST be written in {lang_name}.
+        coverage_note = (
+            f"Coverage so far — Intro: {'✓' if has_intro else '✗'}, "
+            f"Technical: {'✓' if has_technical else '✗'}, "
+            f"Behavioural: {'✓' if has_behavioural else '✗'}."
+        )
+
+        has_resume = bool(resume_text and resume_text.strip())
+        has_jd     = bool(job_description and job_description.strip())
+
+        if force_complete:
+            completion_instruction = (
+                "IMPORTANT: This is the FINAL question (max limit reached). "
+                "Set interview_complete to true. "
+                "next_question must be a warm closing message (not another question). "
+                "next_q_type should be 'closing'."
+            )
+        elif can_complete:
+            completion_instruction = f"""
+COMPLETION DECISION: You have collected {current_q_index} answers. {coverage_note}
+{"Resume claims have been probed." if has_resume else "No resume was provided."}
+{"Job description requirements have been addressed." if has_jd else "No job description was provided."}
+
+Set interview_complete to TRUE if ALL of the following are satisfied:
+  1. Intro/background has been covered.
+  2. At least 2-3 technical questions have been asked and answered.
+  3. At least 1 behavioural/situational question has been asked.
+  4. If resume was provided: at least 1-2 specific resume claims have been probed.
+  5. If job description was provided: core required skills have been tested.
+  6. You have enough signal to evaluate fit for the {target_role} role.
+
+Set interview_complete to FALSE and continue if there are meaningful gaps still to explore.
+When continuing, choose the MOST VALUABLE next question type: 'technical', 'behavioural', or 'resume_probe'.
+'resume_probe' = a targeted question about a specific experience or claim from the candidate's resume.
 """
-            next_q_json_field = '"next_question": "Your question for the candidate here (in {lang_name})"'.format(lang_name=lang_name)
         else:
-            next_q_section = "This is the FINAL question. Do NOT generate another question."
-            next_q_json_field = '"next_question": "A short closing message thanking the candidate and telling them their report is ready (written in {lang_name})"'.format(lang_name=lang_name)
+            completion_instruction = (
+                f"IMPORTANT: Only {current_q_index} of a minimum {MIN_QUESTIONS} questions answered. "
+                "Set interview_complete to false. Continue the interview. "
+                f"{coverage_note} "
+                "Choose the most appropriate next question type: 'technical', 'behavioural', or 'resume_probe'."
+            )
 
-        prompt = f"""{lang_instruction}You are an AI interview coach at PrepSpark helping a candidate practise for a {target_role} role.
+        # ── Next question type guidance ──
+        next_q_guidance = {
+            'technical': (
+                f"Ask ONE specific, progressively harder technical question for a {target_role} role. "
+                f"Focus on problem-solving, system design, algorithms, or role-specific tools. "
+                f"Do NOT repeat topics already covered."
+            ),
+            'behavioural': (
+                "Ask ONE behavioural question using STAR format. "
+                "Examples: handling a difficult deadline, resolving a team conflict, "
+                "learning something new under pressure, a project you are proud of. "
+                "Pick the one most relevant to prior answers and the role."
+            ),
+            'resume_probe': (
+                "Pick ONE specific claim, project, technology, or achievement from the candidate's resume "
+                "and ask a probing follow-up to verify depth and authenticity. "
+                "Example: 'You mentioned X project — walk me through the technical challenges you faced.' "
+                "Be specific; reference the actual resume detail."
+            ),
+            'intro': "Ask a natural self-introduction or background follow-up."
+        }
 
-CURRENT: Question {current_q_index} of 5 (type: {current_q_type})
-{history_text}
+        prompt = f"""{lang_instruction}You are an expert AI interviewer at PrepSpark evaluating a candidate for a {target_role} role.
 
-QUESTION ASKED: "{current_question}"
-CANDIDATE ANSWER: "{transcript}"
+{context_block}{history_text}
 
-BEHAVIOURAL DATA (summarised):
+CURRENT ANSWER:
+Question {current_q_index} [{current_q_type}]: "{current_question}"
+Candidate's answer: "{transcript}"
+
+BEHAVIOURAL DATA:
 {timeline_str if timeline_str else "(No timeline data)"}
 Acoustics: WPM={audio_summary.get('wpm', 'N/A')}, Jitter={audio_summary.get('jitter_percent', 'N/A')}%
 Eye contact: {video_summary.get('eye_contact_percent', 'N/A')}%, Emotion: {video_summary.get('dominant_emotion', 'Neutral')}
 
 EVALUATION RULES:
-1. Score 1-10 on technical accuracy, depth, clarity, and relevance.
-2. If the answer is off-topic, note it specifically.
-3. Feedback must be coaching-style (constructive, 2-3 sentences) written in {lang_name}.
+1. Score 1-10 on: technical accuracy, depth, clarity, relevance to the role.
+2. If resume/JD provided, factor in how well the answer matches stated experience and role requirements.
+3. Feedback must be coaching-style (constructive, 2-3 sentences) in {lang_name}.
 4. Do NOT say "great answer", "well done", or reveal the numeric score in feedback.
+5. If answer is vague or contradicts the resume, note it specifically.
 
-{next_q_section}
+{completion_instruction}
+
+Next question guidance (use this if interview_complete is false):
+{json.dumps(next_q_guidance, indent=2)}
 
 Respond ONLY with valid JSON (no markdown, no code fences):
 {{
   "feedback": "2-3 sentences of honest coaching feedback in {lang_name}",
-  {next_q_json_field},
-  "score": 7
+  "next_question": "The next question OR a closing message (in {lang_name})",
+  "next_q_type": "technical | behavioural | resume_probe | intro | closing",
+  "score": 7,
+  "interview_complete": false
 }}"""
 
         try:
@@ -221,33 +281,39 @@ Respond ONLY with valid JSON (no markdown, no code fences):
             )
             result = json.loads(response.text)
 
-            # Safety net: if it's the last question and next_question is still a
-            # technical-sounding question, override it with a closing message.
-            if is_last:
+            # Force override if at max questions
+            if force_complete:
+                result['interview_complete'] = True
+
+            # Safety net: if marked complete but closing text looks like a question, override
+            if result.get('interview_complete'):
                 nq = result.get('next_question', '')
                 suspicious_starts = ('tell me', 'can you', 'describe', 'explain',
-                                     'what is', 'what are', 'how would', 'walk me')
+                                     'what is', 'what are', 'how would', 'walk me',
+                                     'could you', 'give me', 'have you')
                 if any(nq.lower().startswith(s) for s in suspicious_starts):
-                    # Generate a proper closing in the right language
                     result['next_question'] = self._generate_closing_message(language)
+                result['next_q_type'] = 'closing'
+
             return result
 
         except Exception as e:
             print(f"❌ AI analyze_response error: {e}")
-            fallback_next = (
-                self._generate_closing_message(language)
-                if is_last else
-                f"Let's move on. For a {target_role} role, can you explain how you would approach "
-                f"designing a scalable system for handling high traffic?"
-            )
+            is_last = force_complete or (can_complete and current_q_index >= MIN_QUESTIONS)
             return {
                 "feedback": "Could not analyse this response due to a system error.",
-                "next_question": fallback_next,
-                "score": 0
+                "next_question": (
+                    self._generate_closing_message(language)
+                    if is_last else
+                    f"Let's continue. For a {target_role} role, can you walk me through "
+                    f"how you would approach designing a scalable, fault-tolerant system?"
+                ),
+                "next_q_type": "closing" if is_last else "technical",
+                "score": 0,
+                "interview_complete": is_last
             }
 
     def _generate_closing_message(self, language: str) -> str:
-        """Generates a localised closing message when the interview ends."""
         lang_instruction = self._lang_instruction(language)
         lang_name = self._lang_name(language)
         prompt = (
@@ -265,37 +331,36 @@ Respond ONLY with valid JSON (no markdown, no code fences):
             )
 
     # ─────────────────────────────────────────────
-    # RESUME QUESTION
+    # RESUME INTERVIEW (continue interrupted session)
     # ─────────────────────────────────────────────
 
     def generate_resume_question(self, target_role: str, q_index: int,
                                   q_type: str, chat_history: list,
-                                  language: str = 'en') -> dict:
+                                  language: str = 'en',
+                                  resume_text: str = None,
+                                  job_description: str = None) -> dict:
         """Generates the next question when a candidate resumes an interrupted session."""
         lang_instruction = self._lang_instruction(language)
         lang_name = self._lang_name(language)
-
-        history_text = ""
-        if chat_history:
-            history_text = "PREVIOUS Q&A:\n"
-            for item in chat_history:
-                history_text += f"- Q: {item.get('q_text', '')}\n  A: {(item.get('transcript', '') or '')[:200]}\n"
+        context_block = self._build_context_block(resume_text, job_description)
+        history_text = self._build_history_text(chat_history)
 
         type_instructions = {
-            'intro':       "Ask a natural self-introduction or background question.",
-            'technical':   f"Ask ONE concrete technical question for a {target_role} role (algorithms, system design, tools).",
-            'behavioural': "Ask ONE STAR-format behavioural question (e.g. 'Tell me about a time you handled a tough deadline under pressure.')."
+            'intro':        "Ask a natural self-introduction or background question.",
+            'technical':    f"Ask ONE concrete technical question for a {target_role} role (algorithms, system design, tools). Make it relevant to any resume/JD context provided.",
+            'behavioural':  "Ask ONE STAR-format behavioural question relevant to the role.",
+            'resume_probe': "Pick ONE specific claim or project from the candidate's resume and ask a pointed follow-up to verify depth and authenticity.",
         }.get(q_type, "Ask a relevant technical question.")
 
-        prompt = f"""{lang_instruction}You are an AI interview coach at PrepSpark. A candidate is resuming practice for a {target_role} role at question {q_index} of 5.
+        prompt = f"""{lang_instruction}You are an AI interviewer at PrepSpark. A candidate is resuming practice for a {target_role} role at question {q_index}.
 
-{history_text}
-Generate question {q_index} of 5 (type: {q_type}).
+{context_block}{history_text}
+Generate question {q_index} (type: {q_type}).
 {type_instructions}
 Rules: 1-2 sentences, flows naturally from prior answers, no greeting or 'welcome back'.
 The question MUST be written in {lang_name}.
 
-Respond ONLY with JSON: {{"question": "Your question here in {lang_name}"}}"""
+Respond ONLY with JSON: {{"question": "Your question here in {lang_name}",  "q_type": "{q_type}"}}"""
 
         try:
             response = self.model.generate_content(
@@ -305,23 +370,25 @@ Respond ONLY with JSON: {{"question": "Your question here in {lang_name}"}}"""
             return json.loads(response.text)
         except Exception as e:
             print(f"❌ Resume question error: {e}")
-            return {"question": "Can you describe a challenging technical problem you solved recently and walk me through your approach?"}
+            return {"question": "Can you describe a challenging technical problem you solved recently and walk me through your approach?", "q_type": q_type}
 
     # ─────────────────────────────────────────────
     # FINAL REPORT
     # ─────────────────────────────────────────────
 
-    def generate_final_report(self, interview_log: list,
-                               language: str = 'en') -> dict:
+    def generate_final_report(self, interview_log: list, language: str = 'en',
+                               resume_text: str = None,
+                               job_description: str = None) -> dict:
         """
-        Generates the executive performance report once, after Q5.
-        All prose values in the report are written in the specified language.
-        JSON keys always stay in English so the frontend never breaks.
+        Generates the executive performance report once, after the interview ends.
+        Incorporates resume and JD context for a more personalised analysis.
         """
         lang_instruction = self._lang_instruction(language)
         lang_name = self._lang_name(language)
+        context_block = self._build_context_block(resume_text, job_description)
 
-        # Trim transcripts to keep prompt lean
+        total_q = len(interview_log)
+
         lean_log = []
         for r in interview_log:
             lean_log.append({
@@ -341,12 +408,26 @@ Respond ONLY with JSON: {{"question": "Your question here in {lang_name}"}}"""
                 }
             })
 
+        resume_analysis_instruction = ""
+        if resume_text and resume_text.strip():
+            resume_analysis_instruction = (
+                "\n- resume_vs_reality: Analyse how well the candidate's answers matched the "
+                "claims on their resume. Note any gaps, exaggerations, or strong verifications. "
+                f"Write in {lang_name}."
+            )
+
+        jd_fit_instruction = ""
+        if job_description and job_description.strip():
+            jd_fit_instruction = (
+                "\n- jd_fit_analysis: Evaluate how well the candidate's demonstrated skills and "
+                "experience align with the job description requirements. Highlight matched strengths "
+                f"and unaddressed gaps. Write in {lang_name}."
+            )
+
         prompt = f"""{lang_instruction}You are an expert interview coach at PrepSpark generating a post-session performance report.
 
-INTERVIEW DATA:
+{context_block}INTERVIEW DATA ({total_q} questions):
 {json.dumps(lean_log, indent=2)}
-
-The session had 5 questions: Q1=intro, Q2-Q4=technical, Q5=behavioural.
 
 IMPORTANT: JSON keys must stay in English exactly as shown below.
 Only the VALUES (the text content) must be written in {lang_name}.
@@ -355,18 +436,19 @@ Generate a JSON report with EXACTLY these keys:
 {{
   "executive_summary": "2-3 plain sentences on overall performance, key strength, and the single most important thing to improve. Write in {lang_name}.",
   "recommendation": "One of exactly: 'Interview-Ready' | 'Getting There — Keep Practising' | 'More Practice Recommended'",
-  "technical_depth": "Prose analysis of technical answers — what concepts were demonstrated, what was missing. Write in {lang_name}.",
+  "technical_depth": "Prose analysis of technical answers — what concepts were demonstrated, what was missing, and how it matches the target role. Write in {lang_name}.",
   "communication_style": "Prose analysis of clarity, confidence, WPM, and jitter if data available. Write in {lang_name}.",
   "behavioural_signals": "Prose analysis of eye contact, emotion patterns, and composure observed. Write in {lang_name}.",
   "strengths": ["plain string in {lang_name}", "plain string in {lang_name}", "plain string in {lang_name}"],
   "areas_for_improvement": ["plain string in {lang_name}", "plain string in {lang_name}", "plain string in {lang_name}"],
-  "coaching_tips": "3-4 specific, actionable tips to improve before a real interview. Write in {lang_name}."
+  "coaching_tips": "3-4 specific, actionable tips to improve before a real interview. Write in {lang_name}."{resume_analysis_instruction}{jd_fit_instruction}
 }}
 
 Rules:
 - All string values = plain prose in {lang_name}. No nested objects inside strings.
 - strengths and areas_for_improvement = JSON arrays of plain strings only.
 - Be honest and encouraging — this is practice, not rejection.
+- Only include resume_vs_reality if a resume was provided; only include jd_fit_analysis if a JD was provided.
 - Output ONLY the JSON object, no markdown fences."""
 
         try:

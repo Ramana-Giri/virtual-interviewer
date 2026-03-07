@@ -1,18 +1,3 @@
-"""
-TTSService — Text-to-Speech for the Virtual Interviewer.
-
-Primary:  OpenAI TTS API (high-quality, natural voices)
-          → OpenAI TTS auto-detects language from the text itself.
-            No language code is needed — just pass the text in any language.
-
-Fallback: gTTS (Google Text-to-Speech, free, no API key needed)
-          → gTTS requires an explicit language code (e.g. 'hi', 'ta').
-            The language code from the session is passed through here.
-
-Set OPENAI_API_KEY in your .env to use the high-quality voice.
-If the key is missing or the call fails, gTTS is used automatically.
-"""
-
 import os
 import io
 from dotenv import load_dotenv
@@ -66,15 +51,6 @@ class TTSService:
             return self._synthesize_gtts(text, language)
 
     def _synthesize_gtts(self, text: str, language: str = "en") -> bytes | None:
-        """
-        Uses Google Text-to-Speech (free, no API key).
-        language must be a valid gTTS language code.
-
-        Supported Indian language codes for gTTS:
-            hi = Hindi, ta = Tamil, te = Telugu, bn = Bengali,
-            kn = Kannada, ml = Malayalam, mr = Marathi,
-            gu = Gujarati, pa = Punjabi (limited support)
-        """
         try:
             from gtts import gTTS
             # gTTS uses the same 2-letter ISO 639-1 codes we store in the session.

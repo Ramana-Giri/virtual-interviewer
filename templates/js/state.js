@@ -11,8 +11,11 @@ const state = {
   currentQIndex: 1,
   currentQText: '',
   currentQType: 'intro',
-  totalQ: 5,
-  language: 'en',          // ← NEW: ISO 639-1 code for the current session
+  minQ: 5,          // Minimum questions before interview can end
+  maxQ: 10,         // Hard cap on questions
+  language: 'en',   // ISO 639-1 code for the current session
+  hasResume: false,
+  hasJD: false,
   mediaStream: null,
   mediaRecorder: null,
   recordedChunks: [],

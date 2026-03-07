@@ -310,3 +310,20 @@
   .dashboard-body { padding: 24px; }
   .setup-card { padding: 36px 28px; }
 }
+/* ── Resume upload format badges ── */
+.fmt-badge {
+  font-size: 10px;
+  font-family: 'DM Mono', monospace;
+  color: var(--text-dim);
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 4px;
+  padding: 2px 7px;
+  letter-spacing: 0.04em;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+.fmt-badge-active {
+  color: var(--accent-2);
+  background: rgba(100,220,150,0.1);
+  border-color: rgba(100,220,150,0.3);
+}

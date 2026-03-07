@@ -37,6 +37,8 @@ def init_db():
         start_time TEXT,
         status TEXT DEFAULT 'IN_PROGRESS',
         language TEXT DEFAULT 'en',
+        resume_text TEXT,
+        job_description TEXT,
         FOREIGN KEY(user_id) REFERENCES users(id)
     )''')
 
@@ -55,8 +57,6 @@ def init_db():
         FOREIGN KEY(session_id) REFERENCES interviews(session_id)
     )''')
 
-    # Stores the final AI-generated report as JSON.
-    # Written once when the interview is completed. Never regenerated.
     c.execute('''CREATE TABLE IF NOT EXISTS reports (
         session_id TEXT PRIMARY KEY,
         report_json TEXT NOT NULL,
@@ -78,10 +78,15 @@ def _run_migrations(c):
     if "user_id" not in cols:
         c.execute("ALTER TABLE interviews ADD COLUMN user_id INTEGER")
         print("  ↳ Migrated: interviews.user_id")
-    # ── NEW: language column for multilingual support ──
     if "language" not in cols:
         c.execute("ALTER TABLE interviews ADD COLUMN language TEXT DEFAULT 'en'")
         print("  ↳ Migrated: interviews.language")
+    if "resume_text" not in cols:
+        c.execute("ALTER TABLE interviews ADD COLUMN resume_text TEXT")
+        print("  ↳ Migrated: interviews.resume_text")
+    if "job_description" not in cols:
+        c.execute("ALTER TABLE interviews ADD COLUMN job_description TEXT")
+        print("  ↳ Migrated: interviews.job_description")
 
     c.execute("PRAGMA table_info(responses)")
     cols = [r[1] for r in c.fetchall()]
@@ -170,26 +175,25 @@ def logout_user(token):
 # INTERVIEWS
 # ─────────────────────────────────────────────
 
-def create_session(session_id, name, role, user_id=None, language='en'):
-    """Creates a new interview session. language is a 2-letter ISO 639-1 code e.g. 'hi', 'ta'."""
+def create_session(session_id, name, role, user_id=None, language='en',
+                   resume_text=None, job_description=None):
+    """Creates a new interview session with optional resume and job description context."""
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     c.execute(
-        "INSERT INTO interviews (session_id, user_id, candidate_name, target_role, start_time, status, language) "
-        "VALUES (?, ?, ?, ?, ?, 'IN_PROGRESS', ?)",
-        (session_id, user_id, name, role, datetime.now().isoformat(), language)
+        "INSERT INTO interviews "
+        "(session_id, user_id, candidate_name, target_role, start_time, status, language, resume_text, job_description) "
+        "VALUES (?, ?, ?, ?, ?, 'IN_PROGRESS', ?, ?, ?)",
+        (session_id, user_id, name, role, datetime.now().isoformat(),
+         language, resume_text, job_description)
     )
     conn.commit()
     conn.close()
 
 
 def mark_session_completed(session_id: str):
-    """Sets interview status to COMPLETED. Called after the final report is saved."""
     conn = sqlite3.connect(DB_NAME)
-    conn.execute(
-        "UPDATE interviews SET status = 'COMPLETED' WHERE session_id = ?",
-        (session_id,)
-    )
+    conn.execute("UPDATE interviews SET status = 'COMPLETED' WHERE session_id = ?", (session_id,))
     conn.commit()
     conn.close()
 
@@ -217,17 +221,17 @@ def get_chat_history(session_id):
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
     c.execute(
-        "SELECT question_text as q_text, transcript, ai_score FROM responses "
+        "SELECT question_text as q_text, question_type, transcript, ai_score FROM responses "
         "WHERE session_id = ? ORDER BY question_index ASC",
         (session_id,)
     )
     rows = c.fetchall()
     conn.close()
-    return [{"q_text": r["q_text"], "transcript": r["transcript"], "score": r["ai_score"]} for r in rows]
+    return [{"q_text": r["q_text"], "q_type": r["question_type"],
+             "transcript": r["transcript"], "score": r["ai_score"]} for r in rows]
 
 
 def get_session_info(session_id):
-    """Returns the interview row only (no responses)."""
     conn = sqlite3.connect(DB_NAME)
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
@@ -238,8 +242,6 @@ def get_session_info(session_id):
 
 
 def get_full_session_data(session_id):
-    """Returns (session_dict, [response_dicts]) ordered by question_index.
-    session_dict now includes 'language' key."""
     conn = sqlite3.connect(DB_NAME)
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
@@ -260,11 +262,9 @@ def get_full_session_data(session_id):
 
 # ─────────────────────────────────────────────
 # REPORT STORAGE
-# Written once on completion. Loaded on every subsequent view.
 # ─────────────────────────────────────────────
 
 def save_report(session_id: str, report_data: dict):
-    """Stores the generated report permanently in the database."""
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     c.execute(
@@ -276,10 +276,6 @@ def save_report(session_id: str, report_data: dict):
 
 
 def get_stored_report(session_id: str):
-    """
-    Retrieves the stored report from the database.
-    Returns None if the interview is not yet completed.
-    """
     conn = sqlite3.connect(DB_NAME)
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
@@ -299,11 +295,6 @@ def get_stored_report(session_id: str):
 # ─────────────────────────────────────────────
 
 def get_user_interviews(user_id):
-    """
-    Returns all sessions that have at least one response,
-    separated by status (COMPLETED / IN_PROGRESS).
-    Includes avg_score and response_count for display.
-    """
     conn = sqlite3.connect(DB_NAME)
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
@@ -315,6 +306,8 @@ def get_user_interviews(user_id):
                 i.start_time,
                 i.status,
                 i.language,
+                CASE WHEN i.resume_text IS NOT NULL AND i.resume_text != '' THEN 1 ELSE 0 END AS has_resume,
+                CASE WHEN i.job_description IS NOT NULL AND i.job_description != '' THEN 1 ELSE 0 END AS has_jd,
                 COUNT(r.id)              AS response_count,
                 ROUND(AVG(r.ai_score),1) AS avg_score
         FROM interviews i

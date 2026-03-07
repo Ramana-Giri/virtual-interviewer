@@ -24,5 +24,9 @@ dependencies = [
     "python-dotenv>=1.2.1",
     "sentence-transformers>=5.2.0",
     "torch>=2.9.1",
-    "gtts"
+    "gtts",
+    "pdfplumber",
+    "pypdf",
+    "python-docx",
+    "striprtf"
 ]

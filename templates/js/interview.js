@@ -1,24 +1,16 @@
 /* ═══════════════════════════════════════════════════
    PrepSpark — Interview Room
-   Camera opens only when recording starts,
-   closes as soon as recording stops.
+   Dynamic question count, resume + JD aware.
    ═══════════════════════════════════════════════════ */
 
-const Q_TYPES = {
-  1: 'intro',
-  2: 'technical',
-  3: 'technical',
-  4: 'technical',
-  5: 'behavioural'
-};
-
 const Q_TYPE_LABELS = {
-  intro:       'Introduction',
-  technical:   'Technical',
-  behavioural: 'Behavioural'
+  intro:        'Introduction',
+  technical:    'Technical',
+  behavioural:  'Behavioural',
+  resume_probe: 'Resume Deep-Dive',
+  closing:      'Closing'
 };
 
-// Maps ISO 639-1 codes to short display labels shown in the language badge.
 const LANG_LABELS = {
   hi: 'हिन्दी', ta: 'தமிழ்', te: 'తెలుగు', bn: 'বাংলা',
   kn: 'ಕನ್ನಡ', ml: 'മലയാളം', mr: 'मराठी', pa: 'ਪੰਜਾਬੀ',
@@ -70,10 +62,12 @@ function setSensorBadge(id, text, cls) {
 // ─── Start New Interview ───────────────────────────
 
 async function startInterview() {
-  const name     = document.getElementById('setup-name')?.value.trim();
-  const role     = document.getElementById('setup-role')?.value.trim();
-  const language = document.getElementById('setup-language')?.value || 'en'; // ← NEW
-  const errEl    = document.getElementById('setup-error');
+  const name            = document.getElementById('setup-name')?.value.trim();
+  const role            = document.getElementById('setup-role')?.value.trim();
+  const language        = document.getElementById('setup-language')?.value || 'en';
+  const resumeText      = document.getElementById('setup-resume')?.value.trim() || '';
+  const jobDescription  = document.getElementById('setup-jd')?.value.trim() || '';
+  const errEl           = document.getElementById('setup-error');
   if (errEl) errEl.style.display = 'none';
 
   if (!name || !role) {
@@ -85,7 +79,7 @@ async function startInterview() {
     const res  = await fetch(`${API}/start_interview`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body:    JSON.stringify({ name, role, language })  // ← language added
+      body:    JSON.stringify({ name, role, language, resume_text: resumeText, job_description: jobDescription })
     });
     const data = await res.json();
     if (!res.ok) { showError(errEl, data.error); return; }
@@ -94,8 +88,11 @@ async function startInterview() {
     state.currentQIndex = 1;
     state.currentQText  = data.question;
     state.currentQType  = 'intro';
-    state.totalQ        = 5;
-    state.language      = data.language || language;  // ← store in state
+    state.minQ          = data.min_questions || 5;
+    state.maxQ          = data.max_questions || 10;
+    state.language      = data.language || language;
+    state.hasResume     = data.has_resume || false;
+    state.hasJD         = data.has_jd || false;
 
     showPage('interview-page');
     setupInterviewUI(data);
@@ -124,10 +121,10 @@ function setupInterviewUI(data) {
   if (navRole && setupRole) navRole.textContent = setupRole.value;
   if (nameTag && setupName) nameTag.textContent = setupName.value || 'You';
 
-  // ── NEW: Show language badge in topbar ──
   updateLanguageBadge(data.language || state.language);
+  updateContextBadges(data.has_resume || state.hasResume, data.has_jd || state.hasJD);
 
-  updateQuestionCard(data.question_index, data.question, Q_TYPES[data.question_index] || 'intro');
+  updateQuestionCard(data.question_index, data.question, data.question_type || 'intro');
   buildQPips(data.question_index);
 
   const log = document.getElementById('transcript-log');
@@ -136,34 +133,64 @@ function setupInterviewUI(data) {
   setHint('The AI interviewer will speak each question. Recording activates automatically when they finish.');
 }
 
-// ── NEW: update/create the language badge in the topbar ──
 function updateLanguageBadge(langCode) {
   if (!langCode) return;
   const label = LANG_LABELS[langCode] || langCode.toUpperCase();
-
-  // Re-use existing badge if already injected, otherwise create it
   let badge = document.getElementById('iv-lang-badge');
   if (!badge) {
     badge = document.createElement('span');
     badge.id = 'iv-lang-badge';
     badge.style.cssText = [
-      'font-family:"DM Mono",monospace',
-      'font-size:11px',
-      'color:var(--text-muted)',
-      'background:rgba(255,255,255,0.05)',
-      'border:1px solid rgba(255,255,255,0.08)',
-      'border-radius:100px',
-      'padding:2px 10px',
-      'letter-spacing:0.03em',
+      'font-family:"DM Mono",monospace', 'font-size:11px',
+      'color:var(--text-muted)', 'background:rgba(255,255,255,0.05)',
+      'border:1px solid rgba(255,255,255,0.08)', 'border-radius:100px',
+      'padding:2px 10px', 'letter-spacing:0.03em',
     ].join(';');
-
-    // Insert it next to the session badge in the topbar-right
     const sessionBadge = document.getElementById('session-badge');
     if (sessionBadge && sessionBadge.parentNode) {
       sessionBadge.parentNode.insertBefore(badge, sessionBadge);
     }
   }
   badge.textContent = '🌐 ' + label;
+}
+
+function updateContextBadges(hasResume, hasJD) {
+  // Remove old badges if present
+  ['iv-resume-badge', 'iv-jd-badge'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.remove();
+  });
+
+  const sessionBadge = document.getElementById('session-badge');
+  if (!sessionBadge || !sessionBadge.parentNode) return;
+
+  if (hasResume) {
+    const b = document.createElement('span');
+    b.id = 'iv-resume-badge';
+    b.title = 'Resume-tailored questions active';
+    b.style.cssText = [
+      'font-family:"DM Mono",monospace', 'font-size:11px',
+      'color:var(--accent-2)', 'background:rgba(100,220,150,0.08)',
+      'border:1px solid rgba(100,220,150,0.2)', 'border-radius:100px',
+      'padding:2px 10px', 'letter-spacing:0.03em',
+    ].join(';');
+    b.textContent = '📄 Resume';
+    sessionBadge.parentNode.insertBefore(b, sessionBadge);
+  }
+
+  if (hasJD) {
+    const b = document.createElement('span');
+    b.id = 'iv-jd-badge';
+    b.title = 'Job description context active';
+    b.style.cssText = [
+      'font-family:"DM Mono",monospace', 'font-size:11px',
+      'color:var(--warn)', 'background:rgba(245,166,35,0.08)',
+      'border:1px solid rgba(245,166,35,0.2)', 'border-radius:100px',
+      'padding:2px 10px', 'letter-spacing:0.03em',
+    ].join(';');
+    b.textContent = '💼 JD';
+    sessionBadge.parentNode.insertBefore(b, sessionBadge);
+  }
 }
 
 function updateQuestionCard(index, text, type) {
@@ -173,25 +200,50 @@ function updateQuestionCard(index, text, type) {
   const progressLabel = document.getElementById('iv-progress-label');
   const qCard         = document.getElementById('question-card');
 
-  if (labelEl)       labelEl.textContent       = `Question ${index} of 5`;
-  if (progressLabel) progressLabel.textContent = `Question ${index} of 5`;
+  // Dynamic label — no hardcoded total
+  const label = `Question ${index}`;
+  if (labelEl)       labelEl.textContent       = label;
+  if (progressLabel) progressLabel.textContent = label;
   if (textEl)        textEl.textContent        = text;
   if (typeTag) {
     typeTag.textContent = Q_TYPE_LABELS[type] || type;
     typeTag.className   = `iv-q-type-badge ${type}`;
   }
-  if (qCard) qCard.className = 'iv-question-card'; // reset speaking state
+  if (qCard) qCard.className = 'iv-question-card';
 }
 
+/**
+ * Dynamic pip row.
+ * Filled = answered, Active = current, Empty = upcoming (show 2 ahead as placeholders).
+ */
 function buildQPips(current) {
   const container = document.getElementById('q-pips');
   if (!container) return;
   container.innerHTML = '';
-  for (let i = 1; i <= 5; i++) {
+
+  const showUpTo = current + 2; // show 2 future placeholders
+  for (let i = 1; i <= showUpTo; i++) {
     const pip = document.createElement('div');
-    pip.className = 'q-pip' + (i < current ? ' done' : i === current ? ' active' : '');
-    pip.title = Q_TYPE_LABELS[Q_TYPES[i]] || '';
+    if (i < current) {
+      pip.className = 'q-pip done';
+      pip.title = 'Answered';
+    } else if (i === current) {
+      pip.className = 'q-pip active';
+      pip.title = 'Current question';
+    } else {
+      pip.className = 'q-pip';
+      pip.title = 'Upcoming';
+      pip.style.opacity = i === current + 1 ? '0.4' : '0.2';
+    }
     container.appendChild(pip);
+  }
+
+  // Add adaptive hint after min questions
+  if (current >= state.minQ) {
+    const hint = document.createElement('span');
+    hint.style.cssText = 'font-size:10px;color:var(--accent-2);font-family:"DM Mono",monospace;margin-left:8px;opacity:0.8;';
+    hint.textContent = '✓ Adapting to your answers';
+    container.appendChild(hint);
   }
 }
 
@@ -247,7 +299,6 @@ function toggleRecord() {
 }
 
 async function startRecord() {
-  // Open camera fresh for this recording
   try {
     await openCamera();
   } catch (e) {
@@ -259,7 +310,7 @@ async function startRecord() {
   let options = {};
   try {
     options = { mimeType: 'video/webm;codecs=vp9,opus' };
-    new MediaRecorder(state.mediaStream, options); // feature test
+    new MediaRecorder(state.mediaStream, options);
   } catch (_) { options = {}; }
 
   state.mediaRecorder = new MediaRecorder(state.mediaStream, options);
@@ -300,7 +351,6 @@ function stopRecord() {
   state.isRecording = false;
   clearInterval(state.recordTimer);
 
-  // Close camera immediately — user doesn't need to be watched between answers
   closeCamera();
 
   const btn       = document.getElementById('btn-record');
@@ -331,8 +381,6 @@ async function submitResponse() {
   fd.append('question_index', state.currentQIndex);
   fd.append('question_text',  state.currentQText);
   fd.append('question_type',  state.currentQType);
-  // Note: language is NOT sent here — the backend reads it from the session DB,
-  // so there's no need to send it again on every submission.
 
   showProcessing();
 
@@ -350,13 +398,22 @@ async function submitResponse() {
     addToTranscript(state.currentQIndex, state.currentQText, state.currentQType, data.transcript || '');
 
     if (data.status === 'completed') {
-      toast('Session complete! Loading your report…', 'success');
+      // Show closing message if the LLM provided one
+      if (data.closing_message) {
+        const qCard  = document.getElementById('question-card');
+        const textEl = document.getElementById('q-text');
+        const typeTag = document.getElementById('q-type-tag');
+        if (textEl)  textEl.textContent  = data.closing_message;
+        if (typeTag) { typeTag.textContent = 'Session Complete'; typeTag.className = 'iv-q-type-badge closing'; }
+        if (qCard)   qCard.className = 'iv-question-card';
+      }
+      toast(`Session complete! ${data.questions_answered} questions answered. Loading your report…`, 'success');
       closeCamera();
-      setTimeout(() => loadReport(state.sessionId), 1200);
+      setTimeout(() => loadReport(state.sessionId), 2000);
 
     } else {
       const nextIndex = data.next_index;
-      const nextType  = Q_TYPES[nextIndex] || 'technical';
+      const nextType  = data.next_type || 'technical';
 
       state.currentQIndex  = nextIndex;
       state.currentQText   = data.next_question;
@@ -399,9 +456,11 @@ function addToTranscript(qIndex, question, qType, transcript) {
   if (emptyEl) emptyEl.remove();
 
   const typeColors = {
-    intro:       'var(--accent-2)',
-    technical:   'var(--accent)',
-    behavioural: 'var(--warn)'
+    intro:        'var(--accent-2)',
+    technical:    'var(--accent)',
+    behavioural:  'var(--warn)',
+    resume_probe: '#a78bfa',
+    closing:      'var(--text-muted)'
   };
   const color     = typeColors[qType] || 'var(--accent)';
   const typeLabel = Q_TYPE_LABELS[qType] || qType;
