@@ -28,5 +28,9 @@ dependencies = [
     "pdfplumber",
     "pypdf",
     "python-docx",
-    "striprtf"
+    "striprtf",
+    "matplotlib",
+    "reportlab",
+    "pillow",
+    "numpy"
 ]

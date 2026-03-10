@@ -4,13 +4,20 @@
     <div class="logo-mark" style="font-size:20px;">
       <div class="logo-dot"></div> PrepSpark
     </div>
-    <button class="btn-nav" onclick="showPage('dashboard-page'); loadDashboard();">← Dashboard</button>
+    <div style="display:flex;align-items:center;gap:12px;">
+      <button id="btn-download-pdf" class="btn-download-pdf" onclick="downloadPDF()" style="display:none;">
+        <span id="btn-download-icon">⬇</span>
+        <span id="btn-download-label">Download Report PDF</span>
+      </button>
+      <button class="btn-nav" onclick="showPage('dashboard-page'); loadDashboard();">← Dashboard</button>
+    </div>
   </div>
 
   <div class="report-body">
 
+    <!-- ── Header ── -->
     <div class="report-header">
-      <div class="report-eyebrow">Practice Session Report</div>
+      <div class="report-eyebrow">AI Candidate Evaluation Report</div>
       <h1 class="report-title" id="rpt-title">Loading…</h1>
       <div class="report-meta">
         <div class="meta-chip">
@@ -28,7 +35,7 @@
       </div>
     </div>
 
-    <!-- Verdict -->
+    <!-- ── Verdict ── -->
     <div class="report-section">
       <div class="section-label">Overall Assessment</div>
       <div id="verdict-banner" class="verdict-banner verdict-neutral">
@@ -40,25 +47,33 @@
       </div>
     </div>
 
-    <!-- Question Scores -->
+    <!-- ── Question Scores ── -->
     <div class="report-section">
       <div class="section-label">Question Scores</div>
       <div class="score-grid" id="score-grid"></div>
     </div>
 
-    <!-- Executive Summary -->
+    <!-- ── Executive Summary ── -->
     <div class="report-section" id="exec-summary-section">
       <div class="section-label">Executive Summary</div>
       <div class="executive-summary-card" id="executive-summary-body"></div>
     </div>
 
-    <!-- AI Insights -->
+    <!-- ── Visual Analytics (graphs) ── -->
+    <div class="report-section" id="graphs-section" style="display:none;">
+      <div class="section-label">Visual Analytics</div>
+      <div class="graphs-grid" id="graphs-grid">
+        <!-- Populated by report.js -->
+      </div>
+    </div>
+
+    <!-- ── AI Insights ── -->
     <div class="report-section" id="insights-section">
       <div class="section-label">AI Insights</div>
       <div class="analysis-grid" id="analysis-grid"></div>
     </div>
 
-    <!-- Q&A Transcript -->
+    <!-- ── Interview Transcript & Feedback ── -->
     <div class="report-section">
       <div class="section-label">Interview Transcript &amp; Feedback</div>
       <div id="qa-history"></div>

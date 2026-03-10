@@ -1,3 +1,5 @@
+import io
+
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from functools import wraps
@@ -15,6 +17,7 @@ from services.timeline_service import TimelineService
 from services.llm_service import LLMService
 from services.tts_service import TTSService
 from resume_extractor import extract_text as extract_resume_text
+from report_generator import build_graphs, build_pdf
 
 app = Flask(__name__)
 CORS(app, supports_credentials=True)
@@ -103,7 +106,11 @@ def _build_interview_log(responses: list) -> list:
 def _complete_session(session_id: str, session_info: dict):
     """
     Called once after the final question is answered.
-    Generates the AI report (using resume/JD context) and marks session COMPLETED.
+    1. Generates LLM narrative report.
+    2. Generates structured analytics data (for graphs).
+    3. Generates 6 graph images.
+    4. Assembles and stores a PDF report.
+    5. Marks session COMPLETED.
     """
     try:
         print(f"📄 Generating report for session {session_id}…")
@@ -113,7 +120,10 @@ def _complete_session(session_id: str, session_info: dict):
         language        = session_info.get('language', 'en')
         resume_text     = session_info.get('resume_text') or None
         job_description = session_info.get('job_description') or None
+        target_role     = session_info.get('target_role', 'Professional')
 
+        # ── Step 1: LLM narrative report ──
+        print("  → Generating narrative report…")
         detailed_report = llm_svc.generate_final_report(
             interview_log,
             language=language,
@@ -123,7 +133,7 @@ def _complete_session(session_id: str, session_info: dict):
 
         full_payload = {
             "candidate":       session_info["candidate_name"],
-            "role":            session_info["target_role"],
+            "role":            target_role,
             "session_id":      session_id,
             "start_time":      session_info.get("start_time", ""),
             "language":        language,
@@ -133,13 +143,59 @@ def _complete_session(session_id: str, session_info: dict):
             "responses":       interview_log,
             "report":          detailed_report
         }
-
         database.save_report(session_id, full_payload)
+
+        # ── Step 2: Analytics data (for graphs) ──
+        print("  → Generating analytics…")
+        analytics = llm_svc.generate_report_analytics(
+            interview_log,
+            target_role=target_role,
+            resume_text=resume_text,
+            job_description=job_description,
+            language=language
+        )
+
+        # ── Step 3: Generate graph images ──
+        print("  → Generating graphs…")
+        graphs = build_graphs(interview_log, analytics)
+
+        # ── Step 4: Build PDF ──
+        print("  → Building PDF…")
+        session_meta = {
+            "candidate_name": session_info["candidate_name"],
+            "target_role":    target_role,
+            "company_name":   session_info.get("company_name", ""),
+            "session_id":     session_id,
+            "start_time":     session_info.get("start_time", ""),
+            "language":       language,
+            "total_questions": len(interview_log),
+        }
+        pdf_bytes = build_pdf(
+            session_info=session_meta,
+            analytics=analytics,
+            report=detailed_report,
+            responses=interview_log,
+            graphs=graphs
+        )
+        database.save_pdf_report(session_id, pdf_bytes, analytics)
+
+        # ── Step 5: Inject graph base64 into JSON payload for frontend display ──
+        full_payload["analytics"] = analytics
+        full_payload["graphs_b64"] = {k: base64.b64encode(v).decode() for k, v in graphs.items()}
+        database.save_report(session_id, full_payload)
+
         database.mark_session_completed(session_id)
-        print(f"✅ Session {session_id} marked COMPLETED ({len(interview_log)} questions).")
+        print(f"✅ Session {session_id} COMPLETED — {len(interview_log)} questions, "
+              f"PDF {len(pdf_bytes)//1024}KB, {len(graphs)} graphs.")
+
     except Exception as e:
         print(f"⚠️  Report generation failed: {e}")
         import traceback; traceback.print_exc()
+        # Still mark completed even if PDF/graphs fail, so user can see text report
+        try:
+            database.mark_session_completed(session_id)
+        except Exception:
+            pass
 
 
 # ─────────────────────────────────────────────
@@ -568,6 +624,11 @@ def get_report():
             resume_text=resume_text,
             job_description=job_description
         )
+        analytics = llm_svc.generate_report_analytics(
+            interview_log, target_role=session_info["target_role"],
+            resume_text=resume_text, job_description=job_description
+        )
+        graphs = build_graphs(interview_log, analytics)
         report = {
             "candidate":       session_info["candidate_name"],
             "role":            session_info["target_role"],
@@ -578,11 +639,90 @@ def get_report():
             "has_jd":          bool(job_description),
             "total_questions": len(interview_log),
             "responses":       interview_log,
-            "report":          detailed_report
+            "report":          detailed_report,
+            "analytics":       analytics,
+            "graphs_b64":      {k: base64.b64encode(v).decode() for k, v in graphs.items()},
         }
         database.save_report(session_id, report)
 
     return jsonify(report)
+
+
+# ─────────────────────────────────────────────
+# DOWNLOAD PDF REPORT
+# ─────────────────────────────────────────────
+
+@app.route('/download_report', methods=['GET'])
+@require_auth
+def download_report():
+    """
+    Streams the stored PDF for a completed session.
+    If the PDF hasn't been generated yet (e.g. generation failed),
+    it regenerates it on demand.
+    """
+    from flask import send_file
+    session_id = request.args.get('session_id', '').strip()
+    if not session_id:
+        return jsonify({"error": "session_id is required."}), 400
+
+    session_info, responses = database.get_full_session_data(session_id)
+    if not session_info:
+        return jsonify({"error": "Session not found."}), 404
+    if session_info.get('user_id') != request.user_id:
+        return jsonify({"error": "Access denied."}), 403
+    if session_info.get('status') != 'COMPLETED':
+        return jsonify({"error": "Session is not yet completed."}), 400
+
+    pdf_bytes, analytics = database.get_pdf_report(session_id)
+
+    # Regenerate if not cached
+    if not pdf_bytes:
+        print(f"⚠️  PDF missing for {session_id}. Regenerating…")
+        try:
+            language        = session_info.get('language', 'en')
+            resume_text     = session_info.get('resume_text') or None
+            job_description = session_info.get('job_description') or None
+            target_role     = session_info.get('target_role', 'Professional')
+            interview_log   = _build_interview_log(responses)
+
+            stored_report   = database.get_stored_report(session_id)
+            detailed_report = stored_report.get('report', {}) if stored_report else {}
+
+            analytics = llm_svc.generate_report_analytics(
+                interview_log, target_role=target_role,
+                resume_text=resume_text, job_description=job_description
+            )
+            graphs     = build_graphs(interview_log, analytics)
+            session_meta = {
+                "candidate_name": session_info["candidate_name"],
+                "target_role":    target_role,
+                "session_id":     session_id,
+                "start_time":     session_info.get("start_time", ""),
+                "language":       language,
+                "total_questions": len(interview_log),
+            }
+            pdf_bytes = build_pdf(
+                session_info=session_meta,
+                analytics=analytics,
+                report=detailed_report,
+                responses=interview_log,
+                graphs=graphs
+            )
+            database.save_pdf_report(session_id, pdf_bytes, analytics)
+        except Exception as e:
+            print(f"🔥 PDF regeneration failed: {e}")
+            import traceback; traceback.print_exc()
+            return jsonify({"error": f"PDF generation failed: {str(e)}"}), 500
+
+    candidate_name = session_info.get('candidate_name', 'candidate').replace(' ', '_')
+    filename       = f"PrepSpark_Report_{candidate_name}_{session_id}.pdf"
+
+    return send_file(
+        io.BytesIO(pdf_bytes),
+        mimetype='application/pdf',
+        as_attachment=True,
+        download_name=filename
+    )
 
 
 # ─────────────────────────────────────────────

@@ -272,3 +272,69 @@
   .report-body { padding: 24px; }
   .analysis-grid { grid-template-columns: 1fr; }
 }
+/* ─── Graph Grid ─── */
+.graphs-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 20px;
+}
+.graph-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 22px;
+  transition: border-color 0.2s;
+}
+.graph-card:hover { border-color: var(--border-active); }
+.graph-card-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.graph-card-desc {
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 14px;
+}
+.graph-img {
+  width: 100%;
+  border-radius: 8px;
+  display: block;
+}
+
+/* ─── PDF Download Button ─── */
+.btn-download-pdf {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(34,212,163,0.1);
+  border: 1px solid rgba(34,212,163,0.3);
+  color: var(--accent-2);
+  font-family: 'DM Mono', monospace;
+  font-size: 12px;
+  border-radius: 8px;
+  padding: 7px 16px;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+  white-space: nowrap;
+}
+.btn-download-pdf:hover {
+  background: rgba(34,212,163,0.18);
+  border-color: rgba(34,212,163,0.5);
+}
+.btn-download-pdf:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ─── Extra Q-type badge colours ─── */
+.qa-q-type.resume_probe {
+  background: rgba(124,106,247,0.2);
+  color: var(--accent);
+}
+
+@media (max-width: 900px) {
+  .graphs-grid { grid-template-columns: 1fr; }
+}

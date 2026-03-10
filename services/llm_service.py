@@ -11,7 +11,7 @@ genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 # CONSTANTS
 # ─────────────────────────────────────────────
 MIN_QUESTIONS = 5   # LLM cannot end the session before this many answers
-MAX_QUESTIONS = 10  # Session is force-ended at this count regardless
+MAX_QUESTIONS = 15  # Session is force-ended at this count regardless
 
 
 class LLMService:
@@ -463,4 +463,146 @@ Rules:
                 "error": str(e),
                 "executive_summary": "Report generation encountered an error. Please try again.",
                 "recommendation": "More Practice Recommended"
+            }
+
+    # ─────────────────────────────────────────────
+    # REPORT ANALYTICS  (structured data for graphs)
+    # ─────────────────────────────────────────────
+
+    def generate_report_analytics(self, interview_log: list,
+                                   target_role: str,
+                                   resume_text: str = None,
+                                   job_description: str = None,
+                                   language: str = 'en') -> dict:
+        """
+        Generates structured analytics data used to draw the 6 report graphs.
+
+        Returns a dict with:
+          skills_from_resume   : list[str]
+          skills_from_jd       : list[str]
+          skills_matched        : list[str]
+          skills_missing        : list[str]
+          projects_detected     : list[str]
+          experience_summary    : str
+          skill_match           : list[{skill, candidate_score, jd_requirement}]
+          jd_match              : {required_skills_pct, preferred_skills_pct,
+                                   experience_pct, overall_fit_pct}
+          answer_quality        : list[{q_index, clarity, technical_depth,
+                                        relevance, confidence}]
+        """
+        context_block = self._build_context_block(resume_text, job_description)
+
+        lean_log = [
+            {
+                'q_index': r.get('question_index'),
+                'q_type':  r.get('question_type'),
+                'question': r.get('question', '')[:200],
+                'answer':   (r.get('transcript') or '')[:300],
+                'score':    r.get('ai_score', 0),
+                'feedback': (r.get('ai_feedback') or '')[:150],
+            }
+            for r in interview_log
+        ]
+
+        has_resume = bool(resume_text and resume_text.strip())
+        has_jd     = bool(job_description and job_description.strip())
+
+        prompt = f"""You are a senior technical recruiter analysing an interview for a {target_role} role.
+
+{context_block}INTERVIEW LOG:
+{json.dumps(lean_log, indent=2)}
+
+Generate a structured JSON analytics object. Follow these rules:
+- JSON keys must be EXACTLY as listed below.
+- All text values in English regardless of interview language.
+- Be realistic — derive scores from the actual interview answers provided.
+
+Return ONLY valid JSON (no markdown, no code fences):
+{{
+  "skills_from_resume": ["skill1", "skill2"],
+  "skills_from_jd": ["skill1", "skill2"],
+  "skills_matched": ["skill1", "skill2"],
+  "skills_missing": ["skill1", "skill2"],
+  "projects_detected": ["project name or description"],
+  "experience_summary": "2-3 sentence summary of candidate's demonstrated experience",
+  "skill_match": [
+    {{"skill": "Python", "candidate_score": 7, "jd_requirement": 9}},
+    {{"skill": "System Design", "candidate_score": 5, "jd_requirement": 8}},
+    {{"skill": "Communication", "candidate_score": 7, "jd_requirement": 7}},
+    {{"skill": "Problem Solving", "candidate_score": 6, "jd_requirement": 8}},
+    {{"skill": "Domain Knowledge", "candidate_score": 6, "jd_requirement": 7}}
+  ],
+  "jd_match": {{
+    "required_skills_pct": 70,
+    "preferred_skills_pct": 55,
+    "experience_pct": 65,
+    "overall_fit_pct": 63
+  }},
+  "answer_quality": [
+    {{"q_index": 1, "clarity": 7, "technical_depth": 5, "relevance": 8, "confidence": 7}}
+  ]
+}}
+
+Rules:
+- skill_match: include 5–8 skills relevant to the {target_role} role.
+  candidate_score = how well the candidate demonstrated this skill (1–10, from their answers).
+  jd_requirement  = how important this skill is for the role (1–10).
+  {"If no JD provided, infer reasonable requirements for a " + target_role + " role." if not has_jd else ""}
+  {"If no resume, infer candidate_score from interview answers only." if not has_resume else ""}
+- jd_match percentages: realistic estimates based on available evidence.
+  {"Set all to 0 and note no JD was provided if job_description is absent." if not has_jd else ""}
+- answer_quality: one entry per question in the interview log.
+  Score each dimension 1–10 based on the actual answer content.
+- skills_from_resume: extract from resume text if provided, else empty array.
+- skills_from_jd: extract from JD if provided, else empty array.
+- projects_detected: notable projects/products mentioned in resume or answers.
+- Output ONLY the JSON. No explanatory text."""
+
+        try:
+            response = self.model.generate_content(
+                prompt,
+                generation_config={"response_mime_type": "application/json"}
+            )
+            data = json.loads(response.text)
+            # Ensure required keys exist with safe defaults
+            defaults = {
+                'skills_from_resume': [], 'skills_from_jd': [],
+                'skills_matched': [], 'skills_missing': [],
+                'projects_detected': [], 'experience_summary': '',
+                'skill_match': [], 'jd_match': {
+                    'required_skills_pct': 0, 'preferred_skills_pct': 0,
+                    'experience_pct': 0, 'overall_fit_pct': 0
+                },
+                'answer_quality': [],
+            }
+            for k, v in defaults.items():
+                if k not in data:
+                    data[k] = v
+            return data
+
+        except Exception as e:
+            print(f"❌ Analytics generation error: {e}")
+            # Return safe fallback from raw scores
+            aq = [{'q_index': r.get('question_index', i+1),
+                   'clarity': r.get('ai_score', 5),
+                   'technical_depth': max((r.get('ai_score', 5) - 1), 1),
+                   'relevance': r.get('ai_score', 5),
+                   'confidence': max((r.get('ai_score', 5) - 1), 1)}
+                  for i, r in enumerate(interview_log)]
+            avg = sum(r.get('ai_score', 5) for r in interview_log) / max(len(interview_log), 1)
+            pct = int((avg / 10) * 100)
+            return {
+                'skills_from_resume': [], 'skills_from_jd': [],
+                'skills_matched': [], 'skills_missing': [],
+                'projects_detected': [], 'experience_summary': '',
+                'skill_match': [
+                    {'skill': 'Technical Knowledge', 'candidate_score': int(avg), 'jd_requirement': 8},
+                    {'skill': 'Communication',        'candidate_score': int(avg), 'jd_requirement': 7},
+                    {'skill': 'Problem Solving',      'candidate_score': int(avg), 'jd_requirement': 8},
+                ],
+                'jd_match': {
+                    'required_skills_pct': pct, 'preferred_skills_pct': max(pct-10, 0),
+                    'experience_pct': pct, 'overall_fit_pct': pct,
+                },
+                'answer_quality': aq,
             }

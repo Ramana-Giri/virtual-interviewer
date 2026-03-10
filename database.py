@@ -64,6 +64,14 @@ def init_db():
         FOREIGN KEY(session_id) REFERENCES interviews(session_id)
     )''')
 
+    c.execute('''CREATE TABLE IF NOT EXISTS pdf_reports (
+        session_id TEXT PRIMARY KEY,
+        pdf_data BLOB NOT NULL,
+        analytics_json TEXT NOT NULL,
+        generated_at TEXT NOT NULL,
+        FOREIGN KEY(session_id) REFERENCES interviews(session_id)
+    )''')
+
     conn.commit()
     _run_migrations(c)
     conn.commit()
@@ -322,3 +330,43 @@ def get_user_interviews(user_id):
     rows = [dict(r) for r in c.fetchall()]
     conn.close()
     return rows
+
+
+# ─────────────────────────────────────────────
+# PDF REPORT STORAGE
+# ─────────────────────────────────────────────
+
+def save_pdf_report(session_id: str, pdf_bytes: bytes, analytics: dict):
+    """Stores the generated PDF binary and its analytics data."""
+    conn = sqlite3.connect(DB_NAME)
+    c    = conn.cursor()
+    c.execute(
+        "INSERT OR REPLACE INTO pdf_reports "
+        "(session_id, pdf_data, analytics_json, generated_at) VALUES (?, ?, ?, ?)",
+        (session_id, pdf_bytes, json.dumps(analytics), datetime.now().isoformat())
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_pdf_report(session_id: str) -> tuple:
+    """
+    Returns (pdf_bytes, analytics_dict) or (None, None) if not found.
+    """
+    conn = sqlite3.connect(DB_NAME)
+    conn.row_factory = sqlite3.Row
+    c    = conn.cursor()
+    c.execute(
+        "SELECT pdf_data, analytics_json FROM pdf_reports WHERE session_id = ?",
+        (session_id,)
+    )
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        return None, None
+    analytics = {}
+    try:
+        analytics = json.loads(row['analytics_json'])
+    except Exception:
+        pass
+    return bytes(row['pdf_data']), analytics
